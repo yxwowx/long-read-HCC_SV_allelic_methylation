@@ -14,12 +14,10 @@ remain excluded (`EXCLUDED.md`).
 
 ## Files
 - `fig8_tcga_validation.R` <- `remodeled_constitutional_AMR/viz/v1/fig8_tcga_validation.R` — **copied**. Kept whole (not just Module 4c) since the survival block depends on TCGA download/methylation-processing objects (Modules 1-2) built earlier in the same script; its other panels (A/B/D/E) duplicate `viz/v4` coverage and can be trimmed later if desired, but aren't the reason this file is here.
-
-## Planned files
-- `tcga_lihc.R` <- `remodeled_constitutional_AMR/external_validation/tcga_lihc.R`
-- `tcga_lihc_shared_fragility.R` <- `remodeled_constitutional_AMR/external_validation/tcga_lihc_shared_fragility.R`
-- `tcga_circularity_sensitivity.R` <- `remodeled_constitutional_AMR/external_validation/tcga_circularity_sensitivity.R`
-- `tcga_scna_meth_comparison.R` <- `remodeled_constitutional_AMR/post_processing/tcga_scna_meth_comparison.R`
-- `hm450_segdup_probe_density.R` <- `remodeled_constitutional_AMR/post_processing/hm450_segdup_probe_density.R` (C17, HM450 probe-depletion audit)
-- `admr_normal_tissue_variance.R` <- `remodeled_constitutional_AMR/post_processing/admr_normal_tissue_variance.R` (C21, TCGA normal-liver inter-sample SD)
-- `a_dup1_dup_power_tcga.R` <- `remodeled_constitutional_AMR/post_processing/a_dup1_dup_power_tcga.R` (A_DUP1, power calc + TCGA CN-gain distance-bin test)
+- `tcga_lihc.R` <- `remodeled_constitutional_AMR/external_validation/tcga_lihc.R` — **copied**
+- `tcga_lihc_shared_fragility.R` <- `remodeled_constitutional_AMR/external_validation/tcga_lihc_shared_fragility.R` — **copied**
+- `tcga_circularity_sensitivity.R` <- `remodeled_constitutional_AMR/external_validation/tcga_circularity_sensitivity.R` — **copied**
+- `tcga_scna_meth_comparison.R` <- `remodeled_constitutional_AMR/post_processing/tcga_scna_meth_comparison.R` — **copied**
+- `hm450_segdup_probe_density.R` <- `remodeled_constitutional_AMR/post_processing/hm450_segdup_probe_density.R` (C17, HM450 probe-depletion audit) — **copied**
+- `admr_normal_tissue_variance.R` <- `remodeled_constitutional_AMR/post_processing/admr_normal_tissue_variance.R` (C21, TCGA normal-liver inter-sample SD) — **copied**
+- `a_dup1_dup_power_tcga.R` <- `remodeled_constitutional_AMR/post_processing/a_dup1_dup_power_tcga.R` (A_DUP1, power calc + TCGA CN-gain distance-bin test) — **copied**

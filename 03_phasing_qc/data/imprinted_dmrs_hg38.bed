@@ -1,0 +1,21 @@
+# Canonical germline imprinted DMRs — hg38 coordinates
+# Sources: Court et al. 2014 Genome Res (PMC3941104); Zink et al. 2018 Nat Genet;
+#          coordinates verified in UCSC hg38 browser / lifted from hg19 where needed.
+# Columns: chrom  start  end  locus_name  methylated_parent
+# methylated_parent: "pat"=paternally methylated allele, "mat"=maternally methylated allele
+chr11	2016417	2018554	H19_IGF2-ICR	pat
+chr11	2699479	2701479	KCNQ1OT1_KvDMR1	mat
+chr15	24952920	24953946	SNRPN_PWS-IC	pat
+chr14	100779423	100784420	MEG3_IG-DMR	pat
+chr6	144284680	144286714	PLAGL1_ZAC1	mat
+chr7	130130201	130131200	MEST_PEG1	pat
+chr19	57320432	57327431	PEG3	pat
+chr20	36153024	36155023	NNAT	pat
+chr20	58839718	58840718	GNAS-AS1	mat
+chr7	94259499	94263498	SGCE_PEG10	pat
+chr20	41992001	41995001	L3MBTL1	pat
+chr14	100756419	100760418	DLK1-MEG3-intergenic	pat
+chr1	68450000	68454000	DIRAS3	mat
+chr15	23928000	23931999	NDN	pat
+chr13	48877500	48879500	RB1	mat
+chr7	50826985	50828235	GRB10	pat

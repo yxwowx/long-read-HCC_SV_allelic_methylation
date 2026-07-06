@@ -26,6 +26,8 @@ within trivial rounding:
 - `compartment_stratified_concordance.R` — **new**, written during verification. No persisted current version of this analysis existed anywhere in the source tree; the only script that did this join (`concordance_distance_diagnostic.R`) pointed at the superseded n=8,616 file. Reproduces the manuscript's B/A-compartment numbers (see table above).
 - `concordance_power_icc.R` — **new** (re-pointed fork of `remodeled_constitutional_AMR/post_processing/concordance_power_icc.R`, which reads the superseded n=8,616 file and whose own header cites a stale OR=1.065/p=0.146). Reproduces ICC/DEFF/n_eff/MDES exactly.
 - `sv_clonality_somatic.R` <- `somatic_AMR/post_processing/sv_clonality_somatic.R` (clonal CCF>=0.8-restricted concordance, current)
+- `compute_within_block_hp_delta.R` <- `remodeled_constitutional_AMR/post_processing/compute_within_block_hp_delta.R` — **copied**
+  (within-phase-block SV-aDMR distance + `hp_delta`, supplements `sv_admr_distance_within_block.csv.gz`; reads the constitutional-inclusive `confident_dmr_per_patient.csv.gz`, not `phaseblock_pairs.csv` — a distance-diagnostic utility, not itself a concordance number, so not in the reproduced-numbers table above)
 
 ## Superseded — do not use (see `docs/EXCLUDED.md`)
 - `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance.R` — builds its own pairing from `confident_dmr_per_patient.csv.gz`, produces exactly 8,616 rows = the manuscript's explicitly-named superseded pairing.

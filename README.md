@@ -5,9 +5,17 @@ Variants in Hepatocellular Carcinoma Using Long-Read Sequencing*
 
 ## Status
 
-Skeleton only. Directory structure mirrors the Methods/Results flow of the
-manuscript; scripts are being copied in section by section. Each folder's
-`README.md` lists the files planned for it.
+Directory structure mirrors the Methods/Results flow of the manuscript.
+Analysis scripts for sections `01`-`10` (and `shared/`) are copied in; each
+folder's `README.md` documents provenance, notes superseded/verify-flagged
+files, and cross-references `docs/SCRIPT_MAPPING.md`. Two pieces remain
+outstanding:
+- `figures/` — figure-generation scripts still need to be copied in and
+  manually re-mapped to final Fig/FigS numbers (see `figures/README.md`).
+- `04_admr_definition/constitutional/` — no script maps directly into this
+  subfolder; the relevant analysis (Gold/Silver recurrence-depth staircase)
+  currently lives in `05_fragility_enrichment/` instead (see that folder's
+  README).
 
 ## Layout
 
