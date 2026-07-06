@@ -77,7 +77,7 @@ treating as final.
 | `10_external_validation_tcga/hm450_segdup_probe_density.R` | `remodeled_constitutional_AMR/post_processing/hm450_segdup_probe_density.R` | ok |
 | `10_external_validation_tcga/admr_normal_tissue_variance.R` | `remodeled_constitutional_AMR/post_processing/admr_normal_tissue_variance.R` | ok |
 | `10_external_validation_tcga/a_dup1_dup_power_tcga.R` | `remodeled_constitutional_AMR/post_processing/a_dup1_dup_power_tcga.R` | ok |
-| `10_external_validation_tcga/fig8_tcga_validation.R` (name TBD) | `remodeled_constitutional_AMR/viz/v1/fig8_tcga_validation.R` OR `viz/v2/fig5_tcga_validation.R` | **verify** (open issue #3) |
+| `10_external_validation_tcga/fig8_tcga_validation.R` | `remodeled_constitutional_AMR/viz/v1/fig8_tcga_validation.R` | ok (current, copied) — **resolved issue #3**: sole script computing the 14-gene/none-FDR<0.05 survival result, confirmed via `tcga_survival_summary.csv` row count + FDR values |
 | `05_fragility_enrichment/replication_timing_admr.R` | `remodeled_constitutional_AMR/post_processing/replication_timing_admr.R` | ok, supporting/Repli-seq compartment context |
 | `05_fragility_enrichment/11_replication_timing.R` | `remodeled_constitutional_AMR/pipeline/11_replication_timing.R` | ok |
 | `05_fragility_enrichment/download_encode_repliseq.sh` | `remodeled_constitutional_AMR/post_processing/download_encode_repliseq.sh` | ok |
