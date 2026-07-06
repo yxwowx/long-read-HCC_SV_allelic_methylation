@@ -1,20 +1,44 @@
 # Open issues — resolve before treating the repo as manuscript-final
 
-## 1. Concordance pairing may be stale (confirmed by file timestamps)
+## 1. RESOLVED — concordance numbers reproduce; the confusion was which script/file to use
 
-- `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance.R` output
-  `sv_admr_hp_concordance_pairs.csv.gz` was last generated **2026-06-02 18:25**.
-- Its input `DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz` was
-  regenerated **2026-06-10 09:25** — eight days *after* the concordance script
-  last ran.
-- `viz/v4/fig3_allele_specific_null.R`'s own header comment cites "51.5%,
-  GLMER p=0.146" for this claim, but the manuscript text (v5.3) reports
-  "51.9%, GLMER OR=1.088 [1.015-1.166], p=0.017."
-- **Action:** re-run `sv_admr_hp_concordance.R` (and its dependents
-  `concordance_distance_diagnostic.R`, `sv_admr_hp_concordance_clonal.R`)
-  against the current `confident_dmr_per_patient.csv.gz` and confirm the
-  51.9%/OR=1.088/p=0.017 numbers reproduce before including these in the
-  final repo as-is.
+**Root cause found:** `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance.R`
+builds its *own* pairing from `sv_tad_ctcf_annotation.v2.csv.gz` +
+`confident_dmr_per_patient.csv.gz` (the constitutional-inclusive DMR set) —
+its output `sv_admr_hp_concordance_pairs.csv.gz` has exactly **8,616 rows**,
+confirmed by direct row count. That is precisely the manuscript's explicitly
+-named superseded pairing ("an earlier n=8,616 pairing ... that is no longer
+used"). Three sibling scripts (`concordance_distance_diagnostic.R`,
+`sv_admr_hp_concordance_clonal.R`, `concordance_power_icc.R`) all read this
+same superseded file — none of them reproduce the manuscript.
+
+The **correct current pairing** is `SV_aDMR/phaseblock_pairs.csv` (39,213
+lines incl. header = 39,212 pairs, produced by `somatic_AMR/04_phaseblock_pairing.R`,
+confirmed by direct row count). The correct current concordance script is
+`somatic_AMR/viz/v1/figS6_haplotype_concordance.R`, which reads
+`phaseblock_pairs.csv` and correctly recomputes `dmatch = sv_minus_wt < 0`
+(bypassing the buggy `direction_match` column) — its *code* is right, even
+though its own header comment and `figure_captions.md` cite stale cached
+numbers from an earlier run (48.2%->54.9% "distance paradox" instead of the
+current flat 51.2-52.5%).
+
+**Verification performed:** re-ran the full statistical chain (overall
+GLMER, distance-bin Clopper-Pearson + GLMER, HepG2 Micro-C PC1 compartment
+join + GLMER, ICC/DEFF/n_eff/MDES) directly against `phaseblock_pairs.csv`.
+Every number reproduces the manuscript exactly or within rounding noise of a
+few pairs out of tens of thousands (see the table in
+`07_phased_pairing_concordance/README.md`). No compartment-stratified or
+power/ICC script existed anywhere in the source tree pointed at the correct
+file — both were written fresh (`compartment_stratified_concordance.R`,
+`concordance_power_icc.R` in `07_phased_pairing_concordance/`) as forks of
+the logic in the superseded originals, re-pointed at the current file.
+
+**Action for the source repo (not yet done, needs your OK):** the four
+superseded scripts in `remodeled_constitutional_AMR/post_processing/` still
+point at the wrong file and will keep producing misleading output if anyone
+reruns them. Worth patching their `PAIRS_FILE`/`ADM_FILE` constants in place,
+or at minimum adding a header warning, so the *source* repo doesn't silently
+diverge from the manuscript too.
 
 ## 2. Two coexisting Gold/Silver tiering systems
 

@@ -54,13 +54,17 @@ treating as final.
 | `06_spatial_cooccurrence_tad_ctcf/run_window_enrichment.sh` | `remodeled_constitutional_AMR/post_processing/run_window_enrichment.sh` | ok |
 | `06_spatial_cooccurrence_tad_ctcf/run_confident_dmr_enrichment.sh` | `remodeled_constitutional_AMR/post_processing/run_confident_dmr_enrichment.sh` | ok |
 | `06_spatial_cooccurrence_tad_ctcf/run_compare_50kb_100kb.sh` | `remodeled_constitutional_AMR/post_processing/run_compare_50kb_100kb.sh` | ok |
-| `07_phased_pairing_concordance/04_phaseblock_pairing.R` | `somatic_AMR/04_phaseblock_pairing.R` | ok (current) |
-| `07_phased_pairing_concordance/04_haplotype_sv_admr_analysis.R` | `remodeled_constitutional_AMR/pipeline/04_haplotype_sv_admr_analysis.R` | ok |
-| `07_phased_pairing_concordance/sv_admr_hp_concordance.R` | `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance.R` | **verify** (open issue #1) |
-| `07_phased_pairing_concordance/concordance_distance_diagnostic.R` | `remodeled_constitutional_AMR/post_processing/concordance_distance_diagnostic.R` | verify (depends on #1) |
-| `07_phased_pairing_concordance/sv_admr_hp_concordance_clonal.R` | `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance_clonal.R` | verify (depends on #1) |
-| `07_phased_pairing_concordance/compute_within_block_hp_delta.R` | `remodeled_constitutional_AMR/post_processing/compute_within_block_hp_delta.R` | ok |
-| `07_phased_pairing_concordance/concordance_power_icc.R` | `remodeled_constitutional_AMR/post_processing/concordance_power_icc.R` | ok |
+| `07_phased_pairing_concordance/04_phaseblock_pairing.R` | `somatic_AMR/04_phaseblock_pairing.R` | ok (current, copied) |
+| `07_phased_pairing_concordance/04_haplotype_sv_admr_analysis.R` | `remodeled_constitutional_AMR/pipeline/04_haplotype_sv_admr_analysis.R` | ok (copied) |
+| `07_phased_pairing_concordance/figS6_haplotype_concordance.R` | `somatic_AMR/viz/v1/figS6_haplotype_concordance.R` | ok (current, copied) — **resolved issue #1**: reproduces 51.9%/OR=1.088/p=0.017 and flat distance bins exactly |
+| `07_phased_pairing_concordance/sv_clonality_somatic.R` | `somatic_AMR/post_processing/sv_clonality_somatic.R` | ok (current, copied) |
+| `07_phased_pairing_concordance/compartment_stratified_concordance.R` | none — **new**, written to fill a real gap (verified: reproduces B=53.9%/A=49.5%) | new |
+| `07_phased_pairing_concordance/concordance_power_icc.R` | re-pointed fork of `remodeled_constitutional_AMR/post_processing/concordance_power_icc.R` | new (verified: reproduces ICC=0.0041/DEFF=14.38/n_eff=2727/MDES=52.7%) |
+| ~~`sv_admr_hp_concordance.R`~~ | `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance.R` | **superseded** — confirmed produces the old n=8,616 pairing, see `EXCLUDED.md` |
+| ~~`concordance_distance_diagnostic.R`~~ | `remodeled_constitutional_AMR/post_processing/concordance_distance_diagnostic.R` | **superseded** — reads the old n=8,616 file |
+| ~~`sv_admr_hp_concordance_clonal.R`~~ | `remodeled_constitutional_AMR/post_processing/sv_admr_hp_concordance_clonal.R` | **superseded** — reads the old n=8,616 file |
+| ~~`concordance_power_icc.R` (original)~~ | `remodeled_constitutional_AMR/post_processing/concordance_power_icc.R` | **superseded** — reads the old n=8,616 file, own header cites stale OR=1.065/p=0.146 |
+| `07_phased_pairing_concordance/compute_within_block_hp_delta.R` | `remodeled_constitutional_AMR/post_processing/compute_within_block_hp_delta.R` | ok (not yet copied) |
 | `08_locus_matched_lme/locus_matched_sv_lme.py` | `remodeled_constitutional_AMR/post_processing/locus_matched_sv_lme.py` | ok |
 | `09_hbv_integration/12_hbv_analysis.R` | `remodeled_constitutional_AMR/pipeline/12_hbv_analysis.R` | ok |
 | `09_hbv_integration/hbv_perread_meth.py` | `remodeled_constitutional_AMR/post_processing/hbv_perread_meth.py` | ok |
