@@ -1,0 +1,23 @@
+# Data outputs (large, host-specific, regenerate from scripts)
+*.csv
+*.csv.gz
+*.rds
+*.tsv.gz
+*.bed.gz
+result/
+figs/
+
+# Reference/annotation data are the exception — keep small curated beds
+!03_phasing_qc/data/*.bed
+
+# Logs, scratch, editor cruft
+*.log
+Rplots.pdf
+.DS_Store
+.Rhistory
+.Rproj.user/
+__pycache__/
+*.pyc
+
+# Agent tooling config (not analysis code)
+.claude/
