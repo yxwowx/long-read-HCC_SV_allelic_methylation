@@ -1,12 +1,7 @@
 # Allele-Specific Epigenetic Associations with Somatic Structural Variants in HBV+ HCC
 
 Analysis code for: *Allele-Specific Epigenetic Associations with Somatic Structural
-Variants in Hepatocellular Carcinoma Using Long-Read Sequencing* (manuscript v5.3).
-
-Source repository: `~/script/SV-DMR/` (`remodeled_constitutional_AMR/`, `somatic_AMR/`,
-`shared_file/`). This repo is a curated, manuscript-scoped subset — see
-`docs/SCRIPT_MAPPING.md` for the old-path -> new-path table and `docs/EXCLUDED.md`
-for what was deliberately left out and why.
+Variants in Hepatocellular Carcinoma Using Long-Read Sequencing*
 
 ## Status
 
@@ -37,5 +32,4 @@ manuscript; scripts are being copied in section by section. Each folder's
 Three provenance items need to be resolved against the live pipeline before
 these scripts can be treated as fully reproducing the manuscript's reported
 numbers (concordance pairing staleness, dual Gold/Silver tiering systems,
-survival-analysis script version). Do not close these out silently — confirm
-against `/node200data/kachungk/hcc_data/` outputs first.
+survival-analysis script version).
