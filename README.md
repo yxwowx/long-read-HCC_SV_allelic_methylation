@@ -8,13 +8,7 @@ Variants in Hepatocellular Carcinoma Using Long-Read Sequencing*
 Directory structure mirrors the Methods/Results flow of the manuscript.
 Analysis scripts for sections `01`-`10` (and `shared/`) are copied in; each
 folder's `README.md` documents provenance and notes superseded/verify-flagged
-files. Two pieces remain outstanding:
-- `figures/` — figure-generation scripts not yet populated; still need to be
-  copied in and manually re-mapped to final Fig/FigS numbers.
-- `04_admr_definition/constitutional/` — no script maps directly into this
-  subfolder; the relevant analysis (Gold/Silver recurrence-depth staircase)
-  currently lives in `05_fragility_enrichment/` instead (see that folder's
-  README).
+files.
 
 ## Layout
 
@@ -32,9 +26,9 @@ files. Two pieces remain outstanding:
 | `09_hbv_integration/` | HBV integration per-read and allele-anchored analyses |
 | `10_external_validation_tcga/` | External validation in TCGA-LIHC |
 
-## Known open issues
+## AI Usage Disclosure
 
-Three provenance items need to be resolved against the live pipeline before
-these scripts can be treated as fully reproducing the manuscript's reported
-numbers (concordance pairing staleness, dual Gold/Silver tiering systems,
-survival-analysis script version).
+During the development of this repository, Anthropic's Claude was utilized as an AI coding assistant to improve overall code quality and maintainability. 
+
+* **Refactoring & File Organization:** Claude provided assistance in refactoring Python and R scripts, optimizing the directory structure, and enhancing code readability.
+* **Automated Commits:** The appearance of the AI bot in the GitHub contributor list is strictly due to the automated generation and modification of project configuration files by the AI-integrated development environment. 
