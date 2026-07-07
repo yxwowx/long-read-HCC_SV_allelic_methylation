@@ -7,11 +7,10 @@ Variants in Hepatocellular Carcinoma Using Long-Read Sequencing*
 
 Directory structure mirrors the Methods/Results flow of the manuscript.
 Analysis scripts for sections `01`-`10` (and `shared/`) are copied in; each
-folder's `README.md` documents provenance, notes superseded/verify-flagged
-files, and cross-references `docs/SCRIPT_MAPPING.md`. Two pieces remain
-outstanding:
-- `figures/` — figure-generation scripts still need to be copied in and
-  manually re-mapped to final Fig/FigS numbers (see `figures/README.md`).
+folder's `README.md` documents provenance and notes superseded/verify-flagged
+files. Two pieces remain outstanding:
+- `figures/` — figure-generation scripts not yet populated; still need to be
+  copied in and manually re-mapped to final Fig/FigS numbers.
 - `04_admr_definition/constitutional/` — no script maps directly into this
   subfolder; the relevant analysis (Gold/Silver recurrence-depth staircase)
   currently lives in `05_fragility_enrichment/` instead (see that folder's
@@ -33,9 +32,8 @@ outstanding:
 | `09_hbv_integration/` | HBV integration per-read and allele-anchored analyses |
 | `10_external_validation_tcga/` | External validation in TCGA-LIHC |
 | `figures/` | Main (Fig 1-5) and supplementary (Fig S1-S8) figure scripts |
-| `docs/` | Script provenance mapping, exclusions, open verification items |
 
-## Known open issues (see `docs/OPEN_ISSUES.md`)
+## Known open issues
 
 Three provenance items need to be resolved against the live pipeline before
 these scripts can be treated as fully reproducing the manuscript's reported
