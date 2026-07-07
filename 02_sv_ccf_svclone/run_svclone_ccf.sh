@@ -19,7 +19,7 @@
 #        (no args = run all 12 patients)
 set -euo pipefail
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# Paths 
 BASE=/node200data/kachungk/hcc_data
 SV_DIR=${BASE}/severus_minimap2.out_hg38
 PURPLE_DIR=${BASE}/cnv_deepsomatic.out_hg38/purple
@@ -27,12 +27,10 @@ CLAIRS_DIR=${BASE}/clairS_minimap2.out_hg38
 OUT_DIR=${BASE}/DMR_SVs/result/svclone
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="${SCRIPT_DIR}/svclone_config.ini"
-LOG_DIR=/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs
-DECISION_LOG=${LOG_DIR}/claude_decisions.log
 
-mkdir -p "${OUT_DIR}" "${LOG_DIR}"
+mkdir -p "${OUT_DIR}"
 
-# ── Patient list ───────────────────────────────────────────────────────────────
+# Patient list 
 ALL_SAMPLES=(JJT KIS KSJ LHS LSS MSB NSH PJS PSY WSY YJS YMS)
 if [[ $# -gt 0 ]]; then
     SAMPLES=("$@")
@@ -40,15 +38,12 @@ else
     SAMPLES=("${ALL_SAMPLES[@]}")
 fi
 
-# ── Per-patient function ───────────────────────────────────────────────────────
+# Per-patient function 
 run_patient() {
     local SAMPLE=$1
     local SDIR=${OUT_DIR}/${SAMPLE}
-    local LOG=${LOG_DIR}/svclone_${SAMPLE}.log
 
-    echo "====== ${SAMPLE} ======" | tee -a "${LOG}"
-
-    # ── Input files ────────────────────────────────────────────────────────────
+    # Input files 
     local SV_VCF=${SV_DIR}/${SAMPLE}_HCC.severus.somatic.vcf.gz
     local PURITY_TSV=${PURPLE_DIR}/${SAMPLE}_HCC_tumor.purple.purity.tsv
     local CNV_TSV=${PURPLE_DIR}/${SAMPLE}_HCC_tumor.purple.cnv.somatic.tsv
@@ -58,26 +53,25 @@ run_patient() {
     if [[ -f ${CLAIRS_DIR}/${SAMPLE}_HCC.somatic.merged.PASS.vcf.gz ]]; then
         SNV_VCF=${CLAIRS_DIR}/${SAMPLE}_HCC.somatic.merged.PASS.vcf.gz
     else
-        echo "  [WARN] No ClairS SNV VCF for ${SAMPLE}; running without SNV co-clustering" | tee -a "${LOG}"
+        echo "  [WARN] No ClairS SNV VCF for ${SAMPLE}; running without SNV co-clustering"
     fi
 
     for f in "${SV_VCF}" "${PURITY_TSV}" "${CNV_TSV}"; do
         if [[ ! -f "$f" ]]; then
-            echo "  [ERROR] Missing: $f — skipping ${SAMPLE}" | tee -a "${LOG}"
+            echo "  [ERROR] Missing: $f — skipping ${SAMPLE}"
             return 1
         fi
     done
 
-    # ── Step 1: prepare input files ────────────────────────────────────────────
-    echo "  [1/4] Preparing input files ..." | tee -a "${LOG}"
+    # Step 1: prepare input files 
+    echo "  [1/4] Preparing input files ..."
     mamba run -n svclone python "${SCRIPT_DIR}/prep_svclone_longread.py" \
         --sample    "${SAMPLE}" \
         --sv_vcf    "${SV_VCF}" \
         --purple_purity "${PURITY_TSV}" \
         --purple_cnv    "${CNV_TSV}" \
         ${SNV_VCF:+--snv_vcf "${SNV_VCF}"} \
-        --out_dir   "${OUT_DIR}" \
-        >> "${LOG}" 2>&1
+        --out_dir   "${OUT_DIR}" 
 
     local SVINFO=${SDIR}/${SAMPLE}_svinfo.txt
     local PP=${SDIR}/purity_ploidy.txt
@@ -89,8 +83,8 @@ read_len	insert_mean	insert_std
 15000	0	0
 EOF
 
-    # ── Step 2: filter ─────────────────────────────────────────────────────────
-    echo "  [2/4] Running svclone filter ..." | tee -a "${LOG}"
+    # Step 2: filter 
+    echo "  [2/4] Running svclone filter ..."
     local FILTER_ARGS=(
         -s "${SAMPLE}"
         -i "${SVINFO}"
@@ -103,16 +97,16 @@ EOF
     if [[ -f "${SDIR}/${SAMPLE}_snvs.vcf.gz" ]]; then
         FILTER_ARGS+=(--snvs "${SDIR}/${SAMPLE}_snvs.vcf.gz" --snv_format mutect)
     fi
-    mamba run -n svclone svclone filter "${FILTER_ARGS[@]}" >> "${LOG}" 2>&1
+    mamba run -n svclone svclone filter "${FILTER_ARGS[@]}"
 
     local FILT_SVS=${SDIR}/${SAMPLE}_filtered_svs.tsv
     if [[ ! -f "${FILT_SVS}" ]]; then
-        echo "  [ERROR] Filter step produced no output for ${SAMPLE}" | tee -a "${LOG}"
+        echo "  [ERROR] Filter step produced no output for ${SAMPLE}" 
         return 1
     fi
 
-    # ── Step 3: cluster ────────────────────────────────────────────────────────
-    echo "  [3/4] Running svclone cluster ..." | tee -a "${LOG}"
+    # Step 3: cluster 
+    echo "  [3/4] Running svclone cluster ..."
     local CLUS_ARGS=(
         -s "${SAMPLE}"
         -o "${SDIR}"
@@ -125,10 +119,10 @@ EOF
     if [[ -f "${FILT_SNVS}" ]]; then
         CLUS_ARGS+=(--snvs "${FILT_SNVS}")
     fi
-    mamba run -n svclone svclone cluster "${CLUS_ARGS[@]}" >> "${LOG}" 2>&1
+    mamba run -n svclone svclone cluster "${CLUS_ARGS[@]}" 
 
-    # ── Step 4: postassign ─────────────────────────────────────────────────────
-    echo "  [4/4] Running svclone postassign ..." | tee -a "${LOG}"
+    # Step 4: postassign 
+    echo "  [4/4] Running svclone postassign ..." 
     local RDATA_SVS=${SDIR}/ccube_out/${SAMPLE}_ccube_sv_results.RData
     local RDATA_SNVS=${SDIR}/ccube_out/snvs/${SAMPLE}_ccube_snv_results.RData
 
@@ -136,13 +130,13 @@ EOF
     if [[ -f "${RDATA_SNVS}" ]]; then
         PA_ARGS+=(-j --snvs "${RDATA_SNVS}")
     fi
-    mamba run -n svclone svclone postassign "${PA_ARGS[@]}" >> "${LOG}" 2>&1 || \
-        echo "  [WARN] postassign step skipped or failed (non-fatal)" | tee -a "${LOG}"
+    mamba run -n svclone svclone postassign "${PA_ARGS[@]}"
+        echo "  [WARN] postassign step skipped or failed (non-fatal)" 
 
-    echo "  [OK] ${SAMPLE} complete." | tee -a "${LOG}"
+    echo "  [OK] ${SAMPLE} complete."
 }
 
-# ── Run all patients ───────────────────────────────────────────────────────────
+# Run all patients 
 echo "Running SVclone CCF estimation for: ${SAMPLES[*]}"
 echo "Output directory: ${OUT_DIR}"
 echo ""
@@ -157,7 +151,7 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
     echo "[WARN] Failed samples: ${FAILED[*]}"
 fi
 
-# ── Collect results across patients ───────────────────────────────────────────
+#  Collect results across patients 
 echo ""
 echo "Collecting CCF results ..."
 mamba run -n renv Rscript - << 'RSCRIPT'
@@ -197,5 +191,4 @@ RSCRIPT
 
 echo ""
 echo "Done. Run mutationtimer_sv_timing.R next for timing categories."
-echo "[$(date +%F)] run_svclone_ccf.sh complete: ${#SAMPLES[@]} patients, failed=${#FAILED[@]}" \
-  >> "${DECISION_LOG}"
+echo "[$(date +%F)] run_svclone_ccf.sh complete: ${#SAMPLES[@]} patients, failed=${#FAILED[@]}"

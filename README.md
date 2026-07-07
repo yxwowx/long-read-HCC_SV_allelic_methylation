@@ -31,7 +31,6 @@ files. Two pieces remain outstanding:
 | `08_locus_matched_lme/` | Genome-wide locus-matched LME |
 | `09_hbv_integration/` | HBV integration per-read and allele-anchored analyses |
 | `10_external_validation_tcga/` | External validation in TCGA-LIHC |
-| `figures/` | Main (Fig 1-5) and supplementary (Fig S1-S8) figure scripts |
 
 ## Known open issues
 

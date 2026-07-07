@@ -25,20 +25,20 @@ OUT_DIR   <- file.path(BASE_ADM, "result")
 LOG_FILE  <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(OUT_DIR, showWarnings = FALSE)
 
-# ── 1. Load phaseblock_pairs ──────────────────────────────────────────────────
+# 1. Load phaseblock_pairs =====================================================
 message("Loading phaseblock_pairs ...")
 pairs <- fread(file.path(BASE_ADM, "phaseblock_pairs.csv"))
 # Fix: derive HYPO-concordance from sv_minus_wt (direction_match column is buggy)
 pairs[, hypo_concordant := sv_minus_wt < 0]
 cat(sprintf("pairs: n=%d, HYPO=%.1f%%\n", nrow(pairs), 100*mean(pairs$hypo_concordant)))
 
-# ── 2. Load SVclone CCF (sv_clonality_fragility.csv) ─────────────────────────
+# 2. Load SVclone CCF (sv_clonality_fragility.csv) ==============================
 message("Loading SVclone CCF ...")
 ccf_dt <- fread(file.path(BASE_DMR, "result/sv_clonality_fragility.csv"))
 ccf_dt <- ccf_dt[!is.na(CCF)]
 cat(sprintf("SVclone CCF: %d SVs with valid CCF\n", nrow(ccf_dt)))
 
-# ── 3. Load SV annotation to get PHASESETID → bp_id linkage ──────────────────
+# 3. Load SV annotation to get PHASESETID → bp_id linkage =======================
 message("Loading SV annotation for PHASESETID linkage ...")
 sv_annot <- fread(
   file.path(BASE_DMR, "sv_tad_ctcf_annotation.csv.gz"),
@@ -54,7 +54,7 @@ sv_annot_ccf[, block_id := as.character(PHASESETID)]
 sv_annot_ccf[, patient_code := as.character(sample)]
 cat(sprintf("SV annotation with CCF: %d rows\n", nrow(sv_annot_ccf)))
 
-# ── 4. Join pairs to CCF via block_id + patient_code ─────────────────────────
+# 4. Join pairs to CCF via block_id + patient_code ==============================
 message("Joining pairs to SVclone CCF via phase block ...")
 pairs[, block_id_chr := as.character(block_id)]
 
@@ -99,7 +99,7 @@ cat(sprintf("Pairs with SVclone CCF: %d / %d (%.1f%%)\n",
 # Sanity: should have same rows as input pairs
 cat(sprintf("Output pairs: %d (input: %d)\n", nrow(pairs_ccf), nrow(pairs)))
 
-# ── 5. Analysis A: SegDup SV CCF comparison ──────────────────────────────────
+# 5. Analysis A: SegDup SV CCF comparison ===================================================
 message("\n=== Analysis A: SegDup SV CCF comparison ===")
 segdup_dt <- ccf_dt[, .(segdup_overlap, CCF)]
 segdup_dt[, segdup_lab := ifelse(segdup_overlap, "SegDup SV", "Non-SegDup SV")]
@@ -119,7 +119,7 @@ cat(sprintf("Median SegDup CCF:     %.3f\n", med_seg))
 cat(sprintf("Median Non-SegDup CCF: %.3f\n", med_nonseg))
 cat(sprintf("Wilcoxon p:            %.4g\n", wt_seg$p.value))
 
-# ── 6. Analysis B: HYPO-concordance — all pairs ───────────────────────────────
+# 6. Analysis B: HYPO-concordance — all pairs ===============================================
 message("\n=== Analysis B: HYPO-concordance ===")
 all_n    <- nrow(pairs)
 all_hypo <- mean(pairs$hypo_concordant, na.rm = TRUE)
@@ -141,7 +141,7 @@ all_dist <- pairs[!is.na(dist_bin), .(
 ), by=dist_bin][order(dist_bin)]
 cat("\nAll pairs, concordance by distance bin:\n"); print(all_dist)
 
-# ── 7. Analysis B2: Clonal SV concordance (CCF >= 0.8) ───────────────────────
+# 7. Analysis B2: Clonal SV concordance (CCF >= 0.8) ======================================
 message("\n=== Analysis B2: Clonal SV concordance (CCF >= 0.8) ===")
 clonal_pairs <- pairs_ccf[!is.na(CCF) & CCF >= 0.8]
 n_cl   <- nrow(clonal_pairs)
@@ -184,7 +184,7 @@ p_50kb_cl <- clonal_pairs[bp_dist <= 50000,
 n_50kb_cl <- clonal_pairs[bp_dist <= 50000, .N]
 cat(sprintf("Clonal <=50kb: n=%d, concordance=%.1f%%\n", n_50kb_cl, p_50kb_cl))
 
-# ── 8. Save outputs ───────────────────────────────────────────────────────────
+# 8. Save outputs ====================================================
 fwrite(pairs_ccf, file.path(OUT_DIR, "sv_clonality_somatic_ccf.csv"))
 
 sink(file.path(OUT_DIR, "sv_clonality_somatic_stats.txt"))
@@ -205,7 +205,7 @@ cat(sprintf("Clonal <=50kb: n=%d, concordance=%.1f%%\n", n_50kb_cl, p_50kb_cl))
 sink()
 message("Wrote: sv_clonality_somatic_stats.txt")
 
-# ── 9. Log ────────────────────────────────────────────────────────────────────
+# 9. Log ===========================================================
 cat(sprintf(
   "[%s] sv_clonality_somatic: all_n=%d hypo=%.1f%%; clonal_n=%d hypo_cl=%.1f%%; segdup_p=%.4g\n",
   Sys.Date(), all_n, 100*all_hypo, n_cl, 100*p_cl, wt_seg$p.value),

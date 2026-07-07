@@ -1,12 +1,12 @@
 # conda env: renv
 # =============================================================================
-# SV 유형별 DMR 농축도 비교 분석
+# DMR enrichment comparision based on SV types
 # Copy-neutral SV (INV, TRA/BND) vs Copy-number-changing SV (DEL, DUP, INS)
 # HCC Paired PacBio Long-read WGS | n = 12
 # =============================================================================
-# 핵심 목적:
-#   CNV confounding 배제 — copy-neutral SV 주변에서도 DMR이 농축된다면
-#   methylation 변화가 copy number 변화가 아닌 SV 자체에 의한 것임을 지지
+# Core Objective:
+#   Exclude CNV confounding — if DMRs are enriched around copy-neutral SVs,
+#   it supports that methylation changes are due to SVs themselves rather than copy number variations
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -42,20 +42,17 @@ option_list <- list(
               metavar = "INT",
               help = "Number of permutations [default: %default]"),
   make_option("--outdir", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment",
               metavar = "DIR",
-              help = "Output directory [default: %default]"),
+              help = "Output directory"),
   make_option("--run_id", type = "character", default = "",
               metavar = "STR",
               help = "Run ID prefix for output file names [default: none]"),
   make_option("--dmr_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/consensus_dmrs_per_patient.csv.gz",
               metavar = "FILE",
               help = "Path to DMR CSV(.gz) [default: %default]"),
   make_option("--no_plot", action = "store_true", default = FALSE,
               help = "Skip all visualization (ggsave) steps [default: %default]"),
   make_option("--hap_coloc_csv", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/layer1_coloc_results.csv",
               metavar = "FILE",
               help = "Path to layer1_coloc_results.csv from haplotype_sv_admr_analysis.R [default: %default]"),
   make_option("--sv_strat_file", type = "character", default = NULL,
@@ -74,7 +71,7 @@ if (!opt$group_by %in% c("cnv_class", "tier")) stop("--group_by must be 'cnv_cla
 
 if (!dir.exists(opt$outdir)) dir.create(opt$outdir, recursive = TRUE)
 
-# ── 스크립트별 상수 ────────────────────────────────────────────────────────────
+#  스크립트별 상수 ────────────────────────────────────────────────────────────
 CNV_GROUP_COLORS <- c(
   "Copy-neutral (INV/TRA/BND)" = "#3B8BD4",
   "Copy-number-changing"       = "#E24B4A"
