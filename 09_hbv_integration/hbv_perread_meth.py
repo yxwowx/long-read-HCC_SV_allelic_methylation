@@ -25,7 +25,7 @@ import os
 import sys
 from collections import defaultdict
 from multiprocessing import Pool
-from datetime import date
+from pathlib import Path
 
 import pysam
 import pandas as pd
@@ -39,24 +39,25 @@ try:
 except ImportError:
     HAS_MPL = False
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-HBV_LOCI_CSV  = "/node200data/kachungk/hcc_data/DMR_SVs/12.HBV_analysis/hbv_v1_somatic_hbv_loci.csv"
-BED_DIR_CHIM  = "/node200data/kachungk/hcc_data/hg38+HBV/HBV/breakpoint"
-BED_DIR_INS   = "/node200data/kachungk/hcc_data/hg38+HBV/HBV/ins/breakpoint"
-MAPPING_CSV   = os.path.expanduser("~/patient_code_mapping.csv")
-BAM_TMPL      = ("/node200data/kachungk/hcc_data/hg38+HBV/minimap2.out/"
-                 "haplotagged_bam/{name}_HCC_tumor.haplotagged.bam")
-OUT_DIR       = "/node200data/kachungk/hcc_data/DMR_SVs/result/hbv_perread"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared.paths import HCC_DATA_DIR, PATIENT_CODE_MAP  # noqa: E402
+
+# Paths ==========
+HBV_LOCI_CSV  = str(HCC_DATA_DIR / "DMR_SVs/12.HBV_analysis/hbv_v1_somatic_hbv_loci.csv")
+BED_DIR_CHIM  = str(HCC_DATA_DIR / "hg38+HBV/HBV/breakpoint")
+BED_DIR_INS   = str(HCC_DATA_DIR / "hg38+HBV/HBV/ins/breakpoint")
+MAPPING_CSV   = str(PATIENT_CODE_MAP)
+BAM_TMPL      = str(HCC_DATA_DIR / "hg38+HBV/minimap2.out/haplotagged_bam/{name}_HCC_tumor.haplotagged.bam")
+OUT_DIR       = str(HCC_DATA_DIR / "DMR_SVs/result/hbv_perread")
 OUT_TSV       = os.path.join(OUT_DIR, "hbv_perread_meth.tsv.gz")
-OUT_LOCUS_CSV = "/node200data/kachungk/hcc_data/DMR_SVs/result/hbv_perread_locus_stats.csv"
-OUT_POOL_CSV  = "/node200data/kachungk/hcc_data/DMR_SVs/result/hbv_perread_pooled.csv"
-FIG_DIR       = "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2"
-LOG_FILE      = "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+OUT_LOCUS_CSV = str(HCC_DATA_DIR / "DMR_SVs/result/hbv_perread_locus_stats.csv")
+OUT_POOL_CSV  = str(HCC_DATA_DIR / "DMR_SVs/result/hbv_perread_pooled.csv")
+FIG_DIR       = str(HCC_DATA_DIR / "DMR_SVs/figs/v2")
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(FIG_DIR, exist_ok=True)
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+# Constants ==========
 N_WORKERS      = 3
 MIN_CPG        = 3       # minimum CpG calls per read to include
 PROB_SCALE     = 255.0
@@ -73,7 +74,7 @@ DIST_BINS = [
 ]
 
 
-# ── Per-read 5mC extractor for one genomic window ─────────────────────────────
+# Per-read 5mC extractor for one genomic window ==========
 def _fetch_window(bam, chrom, win_start, win_end, hbv_readnames):
     """
     Fetch reads overlapping [win_start, win_end] and compute per-read mean
@@ -149,7 +150,7 @@ def _fetch_bin(bam, chrom, pos, bin_lo, bin_hi, hbv_readnames):
     return list(d.values())
 
 
-# ── Per-patient worker (module-level for multiprocessing) ─────────────────────
+# Per-patient worker (module-level for multiprocessing) ==========
 def process_patient(args):
     """
     Worker: opens one BAM, processes all loci for one patient, returns row list.
@@ -190,7 +191,7 @@ def process_patient(args):
     return rows
 
 
-# ── Stats helpers ──────────────────────────────────────────────────────────────
+# Stats helpers ==========
 def _mwu(a, b):
     if len(a) < MIN_PER_GROUP or len(b) < MIN_PER_GROUP:
         return float("nan"), float("nan")
@@ -208,7 +209,7 @@ def _wsr(deltas):
         return float("nan"), float("nan")
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# Main ==========
 def main():
     # Patient code → sample name
     mapping = pd.read_csv(MAPPING_CSV)
@@ -280,7 +281,7 @@ def main():
     df.to_csv(OUT_TSV, sep="\t", index=False, compression="gzip")
     print(f"\nSaved per-read table: {OUT_TSV}  ({len(df)} rows)")
 
-    # ── Per-locus MWU stats ────────────────────────────────────────────────────
+    # Per-locus MWU stats ==========
     locus_rows = []
     for (patient, locus_id, dist_bin), grp in df.groupby(
             ["patient", "locus_id", "dist_bin"]):
@@ -306,7 +307,7 @@ def main():
     locus_df.to_csv(OUT_LOCUS_CSV, index=False)
     print(f"Saved locus stats: {OUT_LOCUS_CSV}  ({len(locus_df)} rows)")
 
-    # ── Pooled stats per distance bin ─────────────────────────────────────────
+    # Pooled stats per distance bin ==========
     pooled_rows = []
     for dist_bin, grp in locus_df.groupby("dist_bin"):
         valid   = grp.dropna(subset=["median_delta"])
@@ -338,16 +339,10 @@ def main():
     print(f"\n=== Pooled results ===")
     print(pooled_df.to_string(index=False))
 
-    # ── Figure ─────────────────────────────────────────────────────────────────
+    # Figure ==========
     if HAS_MPL and len(df) > 0:
         _make_figure(df, locus_df)
 
-    # ── Log ────────────────────────────────────────────────────────────────────
-    n_loci_0_1kb = locus_df[locus_df["dist_bin"] == "0-1kb"].shape[0]
-    with open(LOG_FILE, "a") as f:
-        f.write(f"[{date.today()}] hbv_perread_meth.py (C32 Level A, Pool={N_WORKERS}): "
-                f"{len(df)} per-read rows, {n_loci_0_1kb} loci at 0-1kb; "
-                f"see hbv_perread_pooled.csv\n")
     print("\nDone.")
 
 

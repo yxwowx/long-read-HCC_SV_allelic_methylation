@@ -12,10 +12,15 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT     <- "/node200data/kachungk/hcc_data"
+DATA_ROOT     <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT  <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT      <- file.path(DATA_ROOT, "SV_aDMR")
 PHASE_VCF_DIR <- file.path(DATA_ROOT, "hg38+HBV/clairS/phased_vcf")
@@ -27,7 +32,7 @@ DIST_MAX_BP   <- 50000L   # ≤50kb
 DELTA_MIN     <- 0.15     # HP |Δβ| ≥0.15
 RECUR_GOLD    <- 3L       # recurrence n ≥ 3 for somatic aDMR (constitutional removed)
 
-# ── Infer SV-bearing haplotype (from pipeline/04) ─────────────────────────────
+# Infer SV-bearing haplotype (from pipeline/04) ================================
 infer_sv_hp_map <- function(hp_vec, block_id_vec) {
   ok <- !is.na(block_id_vec)
   hp_vec       <- as.integer(hp_vec[ok])
@@ -69,7 +74,7 @@ get_sv_hp_beta <- function(admr_gr, sv_hp_map) {
   )
 }
 
-# ── Load phase blocks ─────────────────────────────────────────────────────────
+# Load phase blocks ============================================================
 cat("[1] Loading phase block GTF files...\n")
 gtf_files <- list.files(PHASE_VCF_DIR, pattern = "\\.gtf$", full.names = TRUE)
 cat(sprintf("  Found %d GTF files\n", length(gtf_files)))
@@ -94,20 +99,20 @@ phase_block_dt <- phase_block_dt |>
 phase_block_dt <- phase_block_dt[seqnames %in% MAIN_CHROMS]
 cat(sprintf("  Total phase blocks: %d rows\n", nrow(phase_block_dt)))
 
-# ── Load somatic aDMR ─────────────────────────────────────────────────────────
+# Load somatic aDMR ============================================================
 cat("[2] Loading annotated somatic aDMR...\n")
 admr_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 admr_dt <- admr_dt[seqnames %in% MAIN_CHROMS]
 cat(sprintf("  %d somatic aDMR across %d patients\n",
             nrow(admr_dt), uniqueN(admr_dt$patient_code)))
 
-# ── Load SV annotation ─────────────────────────────────────────────────────────
+# Load SV annotation ===========================================================
 cat("[3] Loading SV annotation...\n")
 sv_dt <- fread(file.path(DMR_SVS_ROOT, "sv_tad_ctcf_annotation.csv.gz"))
 sv_dt <- sv_dt[seqnames %in% MAIN_CHROMS]
 cat(sprintf("  %d SV breakpoints\n", nrow(sv_dt)))
 
-# ── Assign block_id to somatic aDMR per patient ───────────────────────────────
+# Assign block_id to somatic aDMR per patient ==================================
 cat("[4] Assigning block_id to somatic aDMR (per patient)...\n")
 patients <- intersect(unique(admr_dt$patient_code), unique(phase_block_dt$patient_code))
 cat(sprintf("  Processing %d patients\n", length(patients)))
@@ -130,7 +135,7 @@ admr_with_block <- lapply(patients, function(pt) {
 
 cat(sprintf("  Assigned blocks for %d patients\n", length(admr_with_block)))
 
-# ── Pair SV–somatic aDMR within same phase block ──────────────────────────────
+# Pair SV-somatic aDMR within same phase block =================================
 cat("[5] Pairing SV and somatic aDMR in same phase block...\n")
 
 all_pairs <- lapply(seq_along(patients), function(i) {
@@ -184,7 +189,7 @@ all_pairs <- lapply(seq_along(patients), function(i) {
 
 cat(sprintf("  Total pairs: %d\n", nrow(all_pairs)))
 
-# ── Tiering ──────────────────────────────────────────────────────────────────
+# Tiering ======================================================================
 cat("[6] Tier classification...\n")
 
 all_pairs[, direction_match := sv_minus_wt < 0]  # SV-hp is HYPO relative to WT-hp (cis-induction test)
@@ -223,17 +228,12 @@ tier_rationale <- data.frame(
   )
 )
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 fwrite(all_pairs, file.path(OUT_ROOT, "phaseblock_pairs.csv"))
 fwrite(tier_summ, file.path(OUT_ROOT, "somatic_tier_summary.csv"))
 fwrite(tier_rationale, file.path(OUT_ROOT, "somatic_tier_rationale.csv"))
 
 cat(sprintf("\nSaved: phaseblock_pairs.csv (%d rows)\n", nrow(all_pairs)))
 cat(sprintf("Saved: somatic_tier_summary.csv, somatic_tier_rationale.csv\n"))
-
-log_decision(sprintf("04_phaseblock_pairing: %d SV-aDMR pairs; Gold=%d, Silver=%d",
-                     nrow(all_pairs),
-                     tier_summ[tier=="Gold", N],
-                     tier_summ[tier=="Silver", N]))
 
 cat("=== Done: 04_phaseblock_pairing.R ===\n")

@@ -15,14 +15,21 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(optparse)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 option_list <- list(
   make_option("--gold_file", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")),
   make_option("--cache_dir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/tcga_cache"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/tcga_cache")),
   make_option("--outdir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/02.sv_dmr_enrichment")),
   make_option("--run_id", type = "character", default = "tier_v2"),
   make_option("--probe_window_bp", type = "integer", default = 2000L,
     help = "Window around Gold DMR center to match HM450 probes (default 2kb)")
@@ -32,11 +39,10 @@ opt <- parse_args(OptionParser(option_list = option_list))
 OUTDIR    <- opt$outdir
 CACHE_DIR <- opt$cache_dir
 RUN_ID    <- opt$run_id
-LOG_FILE  <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(CACHE_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(OUTDIR,    showWarnings = FALSE, recursive = TRUE)
 
-# ── Load TCGAbiolinks lazily ───────────────────────────────────────────────────
+# Load TCGAbiolinks lazily =====================================================
 load_tcga_pkg <- function() {
   for (pkg in c("TCGAbiolinks", "SummarizedExperiment")) {
     if (!requireNamespace(pkg, quietly = TRUE))
@@ -45,7 +51,7 @@ load_tcga_pkg <- function() {
   }
 }
 
-# ── 1. Gold loci ───────────────────────────────────────────────────────────────
+# 1. Gold loci =================================================================
 message("Loading Gold tier: ", opt$gold_file)
 gold <- fread(opt$gold_file)
 
@@ -71,7 +77,7 @@ gold_gr <- gold %>%
 message(sprintf("Gold tier: %d loci, %d unique chromosomes", nrow(gold_gr),
                 length(unique(gold_gr$chr))))
 
-# ── 2. Download / load TCGA-LIHC HM450 methylation ────────────────────────────
+# 2. Download / load TCGA-LIHC HM450 methylation ===============================
 meth_cache <- file.path(CACHE_DIR, "LIHC_meth450.rds")
 if (file.exists(meth_cache)) {
   message("Loading cached LIHC methylation: ", meth_cache)
@@ -92,7 +98,7 @@ if (file.exists(meth_cache)) {
   message("Saved cache: ", meth_cache)
 }
 
-# ── 3. Download / load TCGA-LIHC copy number (GISTIC) for SV+/SV- proxy ───────
+# 3. Download / load TCGA-LIHC copy number (GISTIC) for SV+/SV- proxy ==========
 # Use GISTIC2 arm-level calls: samples with focal CNA at Gold loci = SV proxy
 gistic_cache <- file.path(CACHE_DIR, "LIHC_gistic.rds")
 if (file.exists(gistic_cache)) {
@@ -111,7 +117,7 @@ if (file.exists(gistic_cache)) {
   saveRDS(gistic_df, gistic_cache)
 }
 
-# ── 4. Match HM450 probes to Gold loci ────────────────────────────────────────
+# 4. Match HM450 probes to Gold loci ===========================================
 load_tcga_pkg()
 meth_mat  <- SummarizedExperiment::assay(meth_se)  # probes × samples
 probe_ann <- SummarizedExperiment::rowRanges(meth_se)
@@ -133,7 +139,7 @@ probe_locus <- data.frame(
 cat(sprintf("Probes matched to Gold loci: %d probes across %d loci\n",
             nrow(probe_locus), length(unique(probe_locus$locus_id))))
 
-# ── 5. Per-locus: mean methylation per TCGA sample ────────────────────────────
+# 5. Per-locus: mean methylation per TCGA sample ===============================
 locus_meth <- lapply(unique(probe_locus$locus_id), function(lid) {
   probes <- probe_locus$probe_id[probe_locus$locus_id == lid]
   probes <- intersect(probes, rownames(meth_mat))
@@ -142,7 +148,7 @@ locus_meth <- lapply(unique(probe_locus$locus_id), function(lid) {
   data.frame(locus_id = lid, sample = names(vals), mean_beta = as.numeric(vals))
 }) %>% bind_rows()
 
-# ── 6. Classify samples as SV+ / SV- using arm-level CNA as proxy ─────────────
+# 6. Classify samples as SV+ / SV- using arm-level CNA as proxy ================
 # Samples with any focal amplification or deep deletion at locus = SV_proxy_pos
 # This is approximate; ideally would use PCAWG SV calls
 classify_sv_proxy <- function(gistic_obj, locus_id_vec) {
@@ -171,7 +177,7 @@ locus_meth <- locus_meth %>%
     sample_type = ifelse(grepl("-01[A-Z]$", sample), "Tumor", "Normal")
   )
 
-# ── 7. Per-locus Wilcoxon test: SV+ vs SV- ────────────────────────────────────
+# 7. Per-locus Wilcoxon test: SV+ vs SV- =======================================
 locus_tests <- locus_meth %>%
   dplyr::filter(sample_type == "Tumor") %>%
   dplyr::group_by(locus_id) %>%
@@ -212,7 +218,7 @@ cat(sprintf("TCGA replication: %d/%d loci FDR<0.05; %s concordant with HCC direc
             n_sig, nrow(locus_tests),
             if (!is.na(n_conc)) paste0(n_conc, "/", n_sig) else "N/A"))
 
-# ── 8. Plot ────────────────────────────────────────────────────────────────────
+# 8. Plot ======================================================================
 theme_hcc <- theme_classic(base_size = 12) +
   theme(strip.background = element_rect(fill = "grey95", color = NA))
 
@@ -241,14 +247,8 @@ p_combined <- p_volcano | p_med_beta
 ggsave(file.path(OUTDIR, paste0(RUN_ID, "_P03_tcga_replication.png")),
        p_combined, width = 12, height = 5, dpi = 150)
 
-# ── 9. Save ────────────────────────────────────────────────────────────────────
+# 9. Save ======================================================================
 fwrite(locus_tests, file.path(OUTDIR, paste0(RUN_ID, "_P03_tcga_locus_tests.csv")))
 fwrite(locus_meth,  file.path(OUTDIR, paste0(RUN_ID, "_P03_tcga_locus_meth.csv.gz")))
-
-cat(append = TRUE,
-    text   = sprintf("[%s] P0-3 tcga_lihc: %d/%d Gold loci sig (FDR<0.05); concordance=%s\n",
-                     Sys.Date(), n_sig, nrow(locus_tests),
-                     if (!is.na(n_conc)) paste0(n_conc, "/", n_sig) else "NA"),
-    file   = LOG_FILE)
 
 message("Done: P0-3 outputs in ", OUTDIR)

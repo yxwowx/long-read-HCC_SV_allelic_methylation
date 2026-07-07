@@ -24,10 +24,17 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(lme4)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-PAIRS_FILE <- "/node200data/kachungk/hcc_data/SV_aDMR/phaseblock_pairs.csv"
-PC1_BW     <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-OUTFILE    <- "/node200data/kachungk/hcc_data/SV_aDMR/result/compartment_stratified_concordance.csv"
+PAIRS_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/phaseblock_pairs.csv")
+PC1_BW     <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+OUTFILE    <- file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/result/compartment_stratified_concordance.csv")
 
 pairs <- fread(PAIRS_FILE)
 # direction_match in phaseblock_pairs.csv is buggy (always TRUE by construction

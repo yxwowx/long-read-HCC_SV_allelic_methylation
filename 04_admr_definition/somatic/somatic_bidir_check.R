@@ -1,5 +1,13 @@
 library(data.table)
-d <- fread('/node200data/kachungk/hcc_data/SV_aDMR/somatic_admr_annotated.csv.gz', nThread=4)
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+d <- fread(file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/somatic_admr_annotated.csv.gz"), nThread=4)
 d <- d[abs(diff.Methy) >= 0.2 & nCG >= 5]
 tot <- nrow(d)
 cat(sprintf('Total somatic aDMR: %d\n', tot))

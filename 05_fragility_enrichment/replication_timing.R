@@ -18,21 +18,25 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(optparse)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 option_list <- list(
   make_option("--sv_file", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz")),
   make_option("--repliseq_bed", type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/encode/HepG2_repliseq_6frac.bed.gz",
+    default = file.path(Sys.getenv("REFERENCE_DIR"), "encode/HepG2_repliseq_6frac.bed.gz"),
     help = "ENCODE HepG2 Repli-seq 6-fraction BED (download if absent)"),
   make_option("--cfs_bed", type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/genomic_element/common_fragile_sites_hg38.bed",
+    default = file.path(Sys.getenv("REFERENCE_DIR"), "genomic_element/common_fragile_sites_hg38.bed"),
     help = "Common fragile sites BED (hg38)"),
   make_option("--outdir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/02.sv_dmr_enrichment")),
   make_option("--run_id", type = "character", default = "tier_v2"),
   make_option("--fetch_encode", action = "store_true", default = FALSE,
     help = "Download ENCODE HepG2 Repli-seq if --repliseq_bed does not exist"),
@@ -43,7 +47,6 @@ opt <- parse_args(OptionParser(option_list = option_list))
 
 OUTDIR   <- opt$outdir
 RUN_ID   <- opt$run_id
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
 ENCODE_REPLISEQ_URL <- "https://www.encodeproject.org/files/ENCFF001LVM/@@download/ENCFF001LVM.bed.gz"
@@ -53,7 +56,7 @@ find_col <- function(df, cands, req = TRUE) {
   if (req) stop("None of [", paste(cands, collapse=","), "] found"); NULL
 }
 
-# ── 1. Load SV data ───────────────────────────────────────────────────────────
+# 1. Load SV data ==============================================================
 message("Reading SV file: ", opt$sv_file)
 sv <- fread(opt$sv_file)
 
@@ -80,7 +83,7 @@ sv_gr$sv_arch <- ifelse(
   "boundary", "non_boundary"
 )
 
-# ── 2. Fetch / load Repli-seq ─────────────────────────────────────────────────
+# 2. Fetch / load Repli-seq ====================================================
 if (!file.exists(opt$repliseq_bed)) {
   if (opt$fetch_encode) {
     message("Downloading ENCODE HepG2 Repli-seq: ", ENCODE_REPLISEQ_URL)
@@ -123,7 +126,7 @@ repli_gr <- GRanges(seqnames = repli_raw$chrom,
                     rt_score = repli_raw$rt_score)
 seqlevelsStyle(repli_gr) <- seqlevelsStyle(sv_gr)
 
-# ── 3. Annotate SVs with replication timing ───────────────────────────────────
+# 3. Annotate SVs with replication timing ======================================
 hits_rt <- findOverlaps(sv_gr, repli_gr, select = "first")
 sv_gr$rt_score <- repli_gr$rt_score[hits_rt]
 
@@ -154,7 +157,7 @@ wt_rt <- wilcox.test(
 )
 cat(sprintf("Wilcoxon (non_boundary RT > boundary RT): p = %.4f\n", wt_rt$p.value))
 
-# ── 4. Common fragile sites ────────────────────────────────────────────────────
+# 4. Common fragile sites ======================================================
 if (file.exists(opt$cfs_bed)) {
   message("Loading CFS: ", opt$cfs_bed)
   cfs_gr <- tryCatch(import(opt$cfs_bed), error = function(e) { message(e$message); NULL })
@@ -192,7 +195,7 @@ if (file.exists(opt$cfs_bed)) {
   p_perm_cfs <- NA; cfs_tab <- NULL
 }
 
-# ── 5. Plots ──────────────────────────────────────────────────────────────────
+# 5. Plots =====================================================================
 p_rt <- ggplot(sv_rt, aes(x = sv_arch, y = rt_score, fill = sv_arch)) +
   geom_violin(alpha = 0.7, trim = TRUE) +
   geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white") +
@@ -213,17 +216,11 @@ p_combined <- p_rt | p_tier_rt
 ggsave(file.path(OUTDIR, paste0(RUN_ID, "_P15_replication_timing.png")),
        p_combined, width = 12, height = 5, dpi = 150)
 
-# ── 6. Save ───────────────────────────────────────────────────────────────────
+# 6. Save ======================================================================
 rt_summary <- sv_rt %>%
   dplyr::group_by(sv_arch, sv_tier) %>%
   dplyr::summarise(n=n(), med_rt=median(rt_score,na.rm=T), .groups="drop")
 fwrite(rt_summary, file.path(OUTDIR, paste0(RUN_ID, "_P15_rt_summary.csv")))
 if (!is.null(cfs_tab)) fwrite(cfs_tab, file.path(OUTDIR, paste0(RUN_ID, "_P15_cfs_overlap.csv")))
-
-cat(append = TRUE,
-    text   = sprintf("[%s] P1-5 replication_timing: KW p=%.4f; Wilcoxon non_boundary>boundary p=%.4f; CFS_perm_p=%s\n",
-                     Sys.Date(), kw_rt$p.value, wt_rt$p.value,
-                     ifelse(is.na(p_perm_cfs), "NA", round(p_perm_cfs, 4))),
-    file   = LOG_FILE)
 
 message("Done: P1-5 outputs in ", OUTDIR)

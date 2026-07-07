@@ -33,15 +33,17 @@ from datetime import datetime
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT     = Path("/node200data/kachungk/hcc_data/DMR_SVs")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared.paths import HCC_DATA_DIR  # noqa: E402
+
+# Paths ==========
+ROOT     = HCC_DATA_DIR / "DMR_SVs"
 DMR_FILE = ROOT / "01.DMR_recurrence/confident_dmr_per_patient.csv.gz"
 SV_FILE  = ROOT / "02.sv_dmr_enrichment/sv_tad_ctcf_annotation.v2.csv.gz"
 OUTDIR   = ROOT / "result"
-LOG_FILE = Path("/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log")
 OUTDIR.mkdir(exist_ok=True)
 
-# ── Parameters ────────────────────────────────────────────────────────────────
+# Parameters ==========
 BIN_KB       = 50          # genomic bin size for locus definition (matches enrichment window)
 MIN_PATIENTS = 2           # minimum patients with aDMR at locus for LME
 WINDOWS_KB   = [10, 50, 100]   # SV–aDMR proximity windows for sensitivity analysis
@@ -51,7 +53,7 @@ def log(msg):
     print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
 
-# ── 1. Load aDMR data ─────────────────────────────────────────────────────────
+# 1. Load aDMR data ==========
 log("Loading aDMR data (confident_dmr_per_patient.csv.gz)...")
 dmr = pd.read_csv(
     DMR_FILE,
@@ -87,7 +89,7 @@ log(f"  {len(dmr_locus):,} (locus × patient) records; "
     f"{dmr_locus['locus_id'].nunique():,} unique loci")
 
 
-# ── 2. Load SV breakpoints ────────────────────────────────────────────────────
+# 2. Load SV breakpoints ==========
 log("Loading SV breakpoints (sv_tad_ctcf_annotation.v2.csv.gz)...")
 sv = pd.read_csv(
     SV_FILE,
@@ -109,7 +111,7 @@ sv["sv_chr"] = sv["sv_chr"].astype(str)
 log(f"  {len(sv):,} SV breakpoints; {sv['patient_code'].nunique()} patients")
 
 
-# ── 3. Flag SV presence per (locus, patient, window) ─────────────────────────
+# 3. Flag SV presence per (locus, patient, window) ==========
 def flag_sv_presence(dmr_locus_df, sv_df, window_kb):
     """
     For each (locus, patient) row, flag True if a same-patient SV breakpoint
@@ -162,7 +164,7 @@ for wkb in WINDOWS_KB:
         f"({100*n_pos/len(dmr_locus):.1f}%)")
 
 
-# ── 4. LME — main analysis (50 kb window) ────────────────────────────────────
+# 4. LME - main analysis (50 kb window) ==========
 log("Fitting linear mixed-effects models...")
 
 try:
@@ -228,25 +230,25 @@ def run_lme(df, sv_col, label, min_pts=MIN_PATIENTS):
                 "mwu_p": mwu_p, "beta": np.nan, "converged": False}
 
 
-# ── 4a. Main model (50kb, all aDMRs) ─────────────────────────────────────────
+# 4a. Main model (50kb, all aDMRs) ==========
 results = []
 
 log("  --- Main model (±50 kb, all phased aDMRs, min_patients≥2) ---")
 results.append(run_lme(dmr_locus, "sv_50kb", "All aDMRs | ±50kb"))
 
-# ── 4b. Sensitivity: window size ──────────────────────────────────────────────
+# 4b. Sensitivity: window size ==========
 log("  --- Sensitivity: window size ---")
 for wkb in WINDOWS_KB:
     col = f"sv_{wkb}kb"
     results.append(run_lme(dmr_locus, col, f"All aDMRs | ±{wkb}kb"))
 
-# ── 4c. Sensitivity: recurrent loci only (n_patients ≥ 3) ────────────────────
+# 4c. Sensitivity: recurrent loci only (n_patients >= 3) ==========
 log("  --- Sensitivity: recurrent loci (locus_recurrence ≥ 3) ---")
 recurrent = dmr_locus[dmr_locus["locus_recurrence"] >= 3].copy()
 results.append(run_lme(recurrent, "sv_50kb", "Recurrent loci (n≥3) | ±50kb",
                        min_pts=2))
 
-# ── 4d. Sensitivity: by SV type ───────────────────────────────────────────────
+# 4d. Sensitivity: by SV type ==========
 log("  --- Sensitivity: by SV type ---")
 # For each SV type, flag sv_present only for that type
 sv_by_type = {t: sv[sv["sv_type"] == t] for t in SV_TYPES}
@@ -262,7 +264,7 @@ for sv_t, sv_sub in sv_by_type.items():
     results.append(run_lme(dmr_locus, col_t, f"{sv_t} SVs | ±50kb"))
 
 
-# ── 5. Per-locus summary table ────────────────────────────────────────────────
+# 5. Per-locus summary table ==========
 log("Building per-locus summary...")
 per_locus = (
     dmr_locus.groupby("locus_id")
@@ -290,7 +292,7 @@ per_locus.to_csv(per_locus_out, index=False)
 log(f"  Per-locus table → {per_locus_out}")
 
 
-# ── 6. Results table ──────────────────────────────────────────────────────────
+# 6. Results table ==========
 results_df = pd.DataFrame(results)
 res_out = OUTDIR / "locus_matched_sv_lme_results.csv"
 results_df.to_csv(res_out, index=False)
@@ -298,11 +300,11 @@ log(f"  LME results → {res_out}")
 print("\n" + results_df.to_string(index=False) + "\n")
 
 
-# ── 7. Figures ────────────────────────────────────────────────────────────────
+# 7. Figures ==========
 log("Generating figures...")
 FIG_DPI = 180
 
-# ── Fig A: Violin — SV+ vs SV- |HP Δβ| (main 50kb window, all loci) ─────────
+# Fig A: Violin — SV+ vs SV- |HP Δβ| (main 50kb window, all loci) ==========
 plot_df = dmr_locus[
     dmr_locus["locus_id"].isin(
         dmr_locus.groupby("locus_id")["patient_code"]
@@ -346,7 +348,7 @@ for n_pts, x_pos in zip(
             ha="center", va="bottom", fontsize=8, color="grey")
 ax.grid(axis="y", alpha=0.3, linestyle="--")
 
-# ── Fig B: Forest plot — sensitivity analyses ─────────────────────────────────
+# Fig B: Forest plot — sensitivity analyses ==========
 ax2 = axes[1]
 if HAS_STATSMODELS:
     forest_df = results_df[results_df["converged"] == True].copy()
@@ -400,7 +402,7 @@ fig.savefig(fig_out, dpi=FIG_DPI, bbox_inches="tight")
 plt.close()
 log(f"  Figure → {fig_out}")
 
-# ── Fig C: per-locus delta scatter ────────────────────────────────────────────
+# Fig C: per-locus delta scatter ==========
 pl_plot = per_locus.dropna(subset=["delta_median"]).copy()
 if len(pl_plot) > 0:
     fig2, ax3 = plt.subplots(figsize=(6, 5))
@@ -427,22 +429,6 @@ if len(pl_plot) > 0:
     plt.close()
     log(f"  Per-locus scatter → {fig2_out}")
 
-
-# ── 8. Decision log ───────────────────────────────────────────────────────────
-main = next((r for r in results if "All aDMRs" in r.get("label", "") and "50kb" in r.get("label", "")), {})
-summary = (
-    f"{datetime.now():%Y-%m-%d} locus_matched_sv_lme.py: "
-    f"n_loci={main.get('n_loci','?')}, n_obs={main.get('n_obs','?')}, "
-    f"LME β={main.get('beta','NA'):.5f}, p={main.get('p','NA'):.4f}; "
-    f"MWU p={main.get('mwu_p','NA'):.4f} (±50kb, all phased aDMRs)"
-    if isinstance(main.get("beta"), float) else
-    f"{datetime.now():%Y-%m-%d} locus_matched_sv_lme.py complete (statsmodels unavailable, MWU only)"
-)
-try:
-    with open(LOG_FILE, "a") as f:
-        f.write(summary + "\n")
-except Exception:
-    pass
 
 log("Done.")
 print(f"\nOutputs in {OUTDIR}:")

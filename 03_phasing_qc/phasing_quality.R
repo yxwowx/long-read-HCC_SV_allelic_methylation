@@ -17,22 +17,27 @@ suppressPackageStartupMessages({
   library(data.table)
   library(dplyr)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-VCF_HG38_DIR <- "/node200data/kachungk/hcc_data/clairS_minimap2.out_hg38/phased_vcf"
-VCF_HBV_DIR  <- "/node200data/kachungk/hcc_data/hg38+HBV/clairS/phased_vcf"
-MAPPING_CSV  <- path.expand("~/patient_code_mapping.csv")
-OUT_DIR      <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
-LOG_FILE     <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+# Paths ========================================================================
+VCF_HG38_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "clairS_minimap2.out_hg38/phased_vcf")
+VCF_HBV_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/clairS/phased_vcf")
+OUT_DIR      <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 TMP_DIR      <- tempdir()
-WHATSHAP     <- "/home/kachungk/miniforge3/envs/hifiasm/bin/whatshap"
+WHATSHAP     <- Sys.getenv("WHATSHAP_BIN")
 
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-# ── Patient mapping ────────────────────────────────────────────────────────────
-pm <- fread(MAPPING_CSV)
+# Patient mapping ==============================================================
+pm <- fread(PATIENT_MAP_PATH)
 # Samples_ID = "JJT_HCC"; VCF naming: hg38 = {Samples_ID}_normal.phased.vcf.gz
 #                                       HBV  = {name}_HCC.phased.vcf.gz
 pm[, name := sub("_HCC$", "", Samples_ID)]
@@ -43,7 +48,7 @@ pm_ok <- pm[file.exists(vcf_hg38) & file.exists(vcf_hbv)]
 cat(sprintf("Patients with both VCFs present: %d / %d\n", nrow(pm_ok), nrow(pm)))
 if (nrow(pm_ok) == 0) stop("No matching VCF pairs found.")
 
-# ── A. whatshap stats (hg38 primary phasing) ─────────────────────────────────
+# A. whatshap stats (hg38 primary phasing) =====================================
 message("\nRunning whatshap stats...")
 stats_list <- lapply(seq_len(nrow(pm_ok)), function(i) {
   pt  <- pm_ok$patient_code[i]
@@ -91,7 +96,7 @@ key_cols <- intersect(c("patient_code", chr_col, "heterozygous",
                       names(stats_genome))
 print(stats_genome[, ..key_cols])
 
-# ── B. whatshap compare (hg38 vs hg38+HBV) ───────────────────────────────────
+# B. whatshap compare (hg38 vs hg38+HBV) =======================================
 # The two phasings share the same clairS caller + sample but differ in reference
 # (HBV contig is an extra decoy). Autosomal het-SNP sets overlap; HBV contig
 # variants simply drop out. --ignore-sample-name handles header mismatch.
@@ -135,7 +140,7 @@ if (nrow(cmp_all) > 0) {
   message("WARNING: whatshap compare produced no output — check sample-name compatibility.")
 }
 
-# ── Cohort summaries for log ──────────────────────────────────────────────────
+# Cohort summaries =============================================================
 med_n50 <- if ("block_n50" %in% names(stats_genome))
   median(as.numeric(stats_genome$block_n50), na.rm = TRUE) else NA_real_
 med_sw  <- if (nrow(cmp_all) > 0 && "all_switch_rate" %in% names(cmp_all))
@@ -145,11 +150,5 @@ med_pf  <- if ("phased_fraction" %in% names(stats_genome))
 
 cat(sprintf("\nCohort: median block_N50=%.0f bp, phased_fraction=%.3f, compare switch_rate=%.4f\n",
             med_n50, med_pf, med_sw))
-
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("[%s] phasing_quality.R (A-I): %d patients; median block_N50=%.0f bp; ",
-            Sys.Date(), nrow(stats_genome), med_n50))
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("phased_frac=%.3f; compare switch_rate=%.4f\n", med_pf, med_sw))
 
 cat("Done.\n")

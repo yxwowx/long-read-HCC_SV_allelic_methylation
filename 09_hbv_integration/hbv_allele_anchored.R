@@ -22,22 +22,28 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-HBV_LOCI_CSV  <- "/node200data/kachungk/hcc_data/DMR_SVs/12.HBV_analysis/hbv_v1_somatic_hbv_loci.csv"
-SV_FILE       <- "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/sv_tad_ctcf_annotation.v2.csv.gz"
-CONF_DMR      <- "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"
-PHASE_VCF_DIR <- "/node200data/kachungk/hcc_data/hg38+HBV/clairS/phased_vcf"
-MAPPING_CSV   <- path.expand("~/patient_code_mapping.csv")
-OUT_DIR       <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
-FIG_DIR       <- "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2"
-LOG_FILE      <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+# Paths ========================================================================
+HBV_LOCI_CSV  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/12.HBV_analysis/hbv_v1_somatic_hbv_loci.csv")
+SV_FILE       <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/02.sv_dmr_enrichment/sv_tad_ctcf_annotation.v2.csv.gz")
+CONF_DMR      <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz")
+PHASE_VCF_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/clairS/phased_vcf")
+MAPPING_CSV   <- Sys.getenv("PATIENT_CODE_MAP")
+OUT_DIR       <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
+FIG_DIR       <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/figs/v2")
 
 HBV_MATCH_BP  <- 500L   # positional tolerance for SV → HBV integration match
 
 dir.create(FIG_DIR, showWarnings = FALSE, recursive = TRUE)
 
-# ── Helpers (copied from pipeline/04 and 12) ───────────────────────────────────
+# Helpers (copied from pipeline/04 and 12) =====================================
 infer_sv_hp_map <- function(hp_vec, block_id_vec) {
   ok           <- !is.na(block_id_vec)
   hp_vec       <- as.integer(hp_vec[ok])
@@ -75,14 +81,14 @@ get_sv_hp_beta_ext <- function(admr_gr, sv_hp_map) {
   )
 }
 
-# ── 1. Load HBV somatic loci ──────────────────────────────────────────────────
+# 1. Load HBV somatic loci =====================================================
 message("Loading somatic HBV loci...")
 hbv_loci <- fread(HBV_LOCI_CSV)
 hbv_loci <- hbv_loci[as.logical(is_tumor) == TRUE]
 cat(sprintf("Somatic HBV loci: %d rows, %d patients\n",
             nrow(hbv_loci), length(unique(hbv_loci$pcode))))
 
-# ── 2. Load SV table, flag HBV-proximal SVs ───────────────────────────────────
+# 2. Load SV table, flag HBV-proximal SVs ======================================
 message("Loading SV annotation...")
 sv <- fread(SV_FILE)
 
@@ -99,11 +105,11 @@ if (n_hbv_sv == 0L) stop("No SVs matched HBV loci.")
 hbv_patients <- unique(sv[is_hbv_bnd == TRUE, sample])
 cat("HBV patients:", paste(sort(hbv_patients), collapse=", "), "\n")
 
-# ── 3. Load patient mapping ───────────────────────────────────────────────────
+# 3. Load patient mapping ======================================================
 patient_map <- fread(MAPPING_CSV)
 setnames(patient_map, "Samples_ID", "Samples_ID")  # keep as-is
 
-# ── 4. Load phase blocks (GTF → GRanges list, per patient) ────────────────────
+# 4. Load phase blocks (GTF -> GRanges list, per patient) ======================
 message("Loading phase block GTF files...")
 gtf_files <- list.files(PHASE_VCF_DIR, pattern = "\\.gtf$", full.names = TRUE)
 if (length(gtf_files) == 0L) stop("No GTF files found in: ", PHASE_VCF_DIR)
@@ -141,7 +147,7 @@ phase_gr_list <- pb_df |>
   makeGRangesFromDataFrame(keep.extra.columns = TRUE) |>
   (\(gr) split(gr, gr$patient_code))()
 
-# ── 5. Load aDMRs, assign block_id, add normal_beta ──────────────────────────
+# 5. Load aDMRs, assign block_id, add normal_beta ==============================
 message("Loading confident aDMR table...")
 admr_raw <- fread(CONF_DMR)
 
@@ -193,7 +199,7 @@ admr_phased_list <- lapply(hbv_patients, function(pt) {
   dmr_gr[!is.na(mcols(dmr_gr)$block_id)]
 }) |> setNames(hbv_patients)
 
-# ── 6. HBV-proximal phase blocks: extract HP-oriented betas + normal ──────────
+# 6. HBV-proximal phase blocks: extract HP-oriented betas + normal =============
 message("Extracting HP-oriented betas for HBV-proximal SV blocks...")
 
 hbv_pairs_list <- lapply(hbv_patients, function(pt) {
@@ -219,7 +225,7 @@ cat(sprintf("\nHBV-proximal aDMR pairs: %d (across %d patients)\n",
             nrow(hbv_df), length(unique(hbv_df$patient_id))))
 print(hbv_df |> count(patient_id, name = "n_pairs"))
 
-# ── 7. Specificity control: non-HBV SV blocks, same patients ─────────────────
+# 7. Specificity control: non-HBV SV blocks, same patients =====================
 message("Extracting non-HBV SV blocks (specificity control)...")
 
 ctrl_pairs_list <- lapply(hbv_patients, function(pt) {
@@ -243,7 +249,7 @@ ctrl_pairs_list <- lapply(hbv_patients, function(pt) {
 ctrl_df <- if (length(ctrl_pairs_list) > 0) bind_rows(ctrl_pairs_list) else data.frame()
 cat(sprintf("Non-HBV control pairs: %d\n", nrow(ctrl_df)))
 
-# ── 8. Compute deviation from normal ─────────────────────────────────────────
+# 8. Compute deviation from normal =============================================
 for (df in list(hbv_df, ctrl_df)) {
   if (nrow(df) == 0) next
   df$dev_hbv <- df$sv_hp_beta  - df$normal_beta
@@ -262,7 +268,7 @@ if (nrow(ctrl_df) > 0) {
   ctrl_df$abs_dev_wt  <- abs(ctrl_df$dev_wt)
 }
 
-# ── 9. Statistical tests ───────────────────────────────────────────────────────
+# 9. Statistical tests =========================================================
 cat("\n=== Test 1: |dev_HBV| vs |dev_WT| — HBV-proximal pairs ===\n")
 wt1 <- tryCatch(
   wilcox.test(hbv_df$abs_dev_hbv, hbv_df$abs_dev_wt,
@@ -323,7 +329,7 @@ if (nrow(ctrl_df) > 0) {
   )
 }
 
-# ── 10. Compile + save ────────────────────────────────────────────────────────
+# 10. Compile + save ===========================================================
 all_pairs <- bind_rows(hbv_df, ctrl_df)
 fwrite(all_pairs,
        file.path(OUT_DIR, "hbv_allele_anchored_pairs.csv"))
@@ -342,7 +348,7 @@ if (length(test_df) > 0) tests_df <- bind_rows(tests_df, test_df[["specificity"]
 fwrite(tests_df, file.path(OUT_DIR, "hbv_allele_anchored_tests.csv"))
 message("Wrote: hbv_allele_anchored_pairs.csv, hbv_allele_anchored_tests.csv")
 
-# ── 11. Figure ────────────────────────────────────────────────────────────────
+# 11. Figure ===================================================================
 message("Generating figure...")
 
 plot_df <- all_pairs |>
@@ -390,20 +396,10 @@ ggsave(file.path(FIG_DIR, "fig_hbv_allele_anchored.png"), combined,
        width = 11, height = 8, dpi = 150)
 message("Saved: fig_hbv_allele_anchored.png")
 
-# ── Log ───────────────────────────────────────────────────────────────────────
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("[%s] hbv_allele_anchored.R (C33 Level B): %d HBV pairs, %d ctrl pairs; ",
-            Sys.Date(), nrow(hbv_df), nrow(ctrl_df)))
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("Wilcoxon |dev_HBV|>|dev_WT| p=%.4f; Binomial hypo p=%.4f\n",
-            wt1$p.value, binom_p))
-
 cat("\nDone (C33 Level B).\n")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# A-III: Covariate-adjusted LMM (primary) + matched resample (sensitivity)
+# A-III: Covariate-adjusted LMM (primary) + matched resample (sensitivity) =====
 # Resolves C33 Test 4 marginal MWU p≈0.055 (unmatched controls).
-# ══════════════════════════════════════════════════════════════════════════════
 cat("\n====== A-III: HBV specificity — covariate-adjusted LMM + matched resample ======\n")
 
 suppressPackageStartupMessages({
@@ -416,7 +412,7 @@ if (!"asym" %in% names(all_pairs)) {
 }
 all_pairs$is_hbv <- all_pairs$group == "HBV-proximal"
 
-# ── 1. Join SV covariates (cnv_class, svtype, VAF) via block_id == PHASESETID ─
+# 1. Join SV covariates (cnv_class, svtype, VAF) via block_id == PHASESETID ====
 # Use the sv data.table already loaded; take one representative SV per block
 # (HBV blocks typically have a single proximal SV; non-HBV blocks take first).
 sv_cov <- unique(sv[!is.na(PHASESETID) & !is.na(HP),
@@ -491,7 +487,7 @@ if (nrow(lmm_clean) >= 10 && length(unique(lmm_clean$patient_id)) >= 3) {
               nrow(lmm_clean), length(unique(lmm_clean$patient_id))))
 }
 
-# ── 2. Matched resample sensitivity ───────────────────────────────────────────
+# 2. Matched resample sensitivity ==============================================
 # Restrict control pool to Non-boundary SVs (matching all HBV-proximal SVs).
 # Match on cnv_class × svtype strata; draw 1000 times; compute empirical p.
 set.seed(42L)
@@ -568,12 +564,5 @@ resample_df <- data.frame(
 )
 fwrite(resample_df, file.path(OUT_DIR, "hbv_specificity_matched_resample.csv"))
 message("Wrote: hbv_specificity_matched_resample.csv")
-
-# ── Log A-III ─────────────────────────────────────────────────────────────────
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("[%s] hbv_allele_anchored.R A-III: LMM is_hbv p=%.4f; ",
-            Sys.Date(), lmm_is_hbv_p))
-cat(append = TRUE, file = LOG_FILE,
-    sprintf("matched resample empirical p=%.4f\n", emp_p))
 
 cat("\nDone (A-III).\n")

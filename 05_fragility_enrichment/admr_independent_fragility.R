@@ -23,22 +23,29 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(123)
 
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 N_CTRL_MULT <- 10   # matched random regions per aDMR
 
-# ── 1. Load unique Gold+Silver aDMR coordinates ────────────────────────────────
+# 1. Load unique Gold+Silver aDMR coordinates ==================================
 message("Loading Gold + Silver aDMR coordinates...")
 admr_cols <- c("tier_class", "admr_chr", "admr_start", "admr_end")
 gold <- fread(GOLD_FILE, data.table = FALSE) |> select(all_of(admr_cols))
@@ -61,7 +68,7 @@ admr_gr <- GRanges(
 )
 admr_widths <- width(admr_gr)
 
-# ── 2. Generate matched random regions (same chr + size distribution) ──────────
+# 2. Generate matched random regions (same chr + size distribution) ============
 message("Generating matched random control regions...")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z"), data.table = FALSE) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
@@ -86,7 +93,7 @@ cat(sprintf("Controls: %d (%.0f× aDMRs)\n", length(ctrl_gr), length(ctrl_gr)/le
 
 all_gr <- c(admr_gr, ctrl_gr)
 
-# ── 3. Annotate with fragility features ───────────────────────────────────────
+# 3. Annotate with fragility features ==========================================
 message("Loading and annotating fragility features...")
 
 segdup_gr <- import(SEGDUP, format = "BED"); seqlevelsStyle(segdup_gr) <- "UCSC"
@@ -106,7 +113,7 @@ all_gr$b_compartment <- !is.na(all_gr$pc1) & all_gr$pc1 < 0
 cat(sprintf("Annotated %d regions (%d aDMR + %d ctrl)\n",
             length(all_gr), sum(all_gr$is_admr), sum(!all_gr$is_admr)))
 
-# ── 4. Per-feature Fisher test ─────────────────────────────────────────────────
+# 4. Per-feature Fisher test ===================================================
 df <- data.frame(
   is_admr       = all_gr$is_admr,
   tier          = all_gr$tier,
@@ -183,7 +190,7 @@ if (nrow(tier_res) > 0) {
   cat("(no tier results — check df$tier values above)\n")
 }
 
-# ── 5. Multivariate logistic regression on aDMRs ──────────────────────────────
+# 5. Multivariate logistic regression on aDMRs =================================
 message("Fitting logistic regression...")
 df_cc <- df |> filter(!is.na(pc1))
 m_admr <- glm(is_admr ~ segdup + lad + b_compartment,
@@ -206,7 +213,7 @@ multi_res <- lapply(list(list(m_admr, df, "Multivariate"),
 cat("\n=== Multivariate logistic (aDMR vs random) ===\n")
 print(multi_res |> select(feature, model, OR, CI_lo, CI_hi, p, sig))
 
-# ── 6. Save results ────────────────────────────────────────────────────────────
+# 6. Save results ==============================================================
 out <- bind_rows(
   fisher_res |> mutate(model = "Univariate Fisher", tier = "All"),
   tier_res   |> mutate(model = "Univariate Fisher"),
@@ -219,7 +226,7 @@ out <- bind_rows(
 fwrite(out, file.path(OUT_DIR, "admr_fragility_enrichment.csv"))
 message("Wrote: admr_fragility_enrichment.csv")
 
-# ── 7. Figures ─────────────────────────────────────────────────────────────────
+# 7. Figures ===================================================================
 feat_levels <- c("SegDup overlap", "LAD overlap", "B-compartment")
 
 # Panel A: grouped bar — % overlap for aDMR vs control

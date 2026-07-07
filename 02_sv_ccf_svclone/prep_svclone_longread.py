@@ -17,11 +17,11 @@ Outputs per patient in <out_dir>/<sample>/:
 Usage:
   mamba run -n svclone python prep_svclone_longread.py \\
       --sample JJT \\
-      --sv_vcf  /node200data/kachungk/hcc_data/severus_minimap2.out_hg38/JJT_HCC.severus.somatic.vcf.gz \\
-      --purple_purity /node200data/kachungk/hcc_data/cnv_deepsomatic.out_hg38/purple/JJT_HCC_tumor.purple.purity.tsv \\
-      --purple_cnv    /node200data/kachungk/hcc_data/cnv_deepsomatic.out_hg38/purple/JJT_HCC_tumor.purple.cnv.somatic.tsv \\
-      --snv_vcf  /node200data/kachungk/hcc_data/clairS_minimap2.out_hg38/JJT_HCC.somatic.merged.PASS.vcf.gz \\
-      --out_dir  /node200data/kachungk/hcc_data/DMR_SVs/result/svclone
+      --sv_vcf  $HCC_DATA_DIR/severus_minimap2.out_hg38/JJT_HCC.severus.somatic.vcf.gz \\
+      --purple_purity $HCC_DATA_DIR/cnv_deepsomatic.out_hg38/purple/JJT_HCC_tumor.purple.purity.tsv \\
+      --purple_cnv    $HCC_DATA_DIR/cnv_deepsomatic.out_hg38/purple/JJT_HCC_tumor.purple.cnv.somatic.tsv \\
+      --snv_vcf  $HCC_DATA_DIR/clairS_minimap2.out_hg38/JJT_HCC.somatic.merged.PASS.vcf.gz \\
+      --out_dir  $HCC_DATA_DIR/DMR_SVs/result/svclone
 """
 
 import argparse
@@ -33,7 +33,7 @@ import re
 import sys
 
 
-# ── Severus VCF → SVclone direction mapping ───────────────────────────────────
+# Severus VCF → SVclone direction mapping ==========
 # Severus STRANDS encodes orientation of both breakend reads.
 # SVclone uses +/- to indicate which side of the breakpoint the read extends.
 STRANDS_TO_DIRS = {
@@ -64,7 +64,7 @@ def sv_classification(svtype, chr1, chr2, strands):
     return "Unknown"
 
 
-# ── VCF helpers ───────────────────────────────────────────────────────────────
+# VCF helpers ==========
 def open_vcf(path):
     if path.endswith(".gz"):
         return gzip.open(path, "rt")
@@ -96,7 +96,7 @@ def parse_bnd_partner_pos(alt):
     return None, None
 
 
-# ── Severus VCF → svinfo.txt ─────────────────────────────────────────────────
+# Severus VCF → svinfo.txt ==========
 def parse_severus_vcf(vcf_path):
     """
     Returns list of SV dicts with keys:
@@ -168,7 +168,7 @@ def parse_severus_vcf(vcf_path):
     return svs
 
 
-# ── Write SVclone svinfo.txt ──────────────────────────────────────────────────
+# Write SVclone svinfo.txt ==========
 SVINFO_HEADER = [
     "ID", "chr1", "pos1", "dir1", "chr2", "pos2", "dir2", "classification",
     "split_norm1", "norm_olap_bp1", "span_norm1", "win_norm1",
@@ -227,7 +227,7 @@ def write_svinfo(svs, out_path):
     print(f"  Wrote {len(svs)} SVs to {out_path}")
 
 
-# ── PURPLE purity/ploidy → SVclone purity_ploidy.txt ─────────────────────────
+# PURPLE purity/ploidy → SVclone purity_ploidy.txt ==========
 def write_purity_ploidy(purple_purity_tsv, sample, out_dir):
     purity = ploidy = None
     with open(purple_purity_tsv) as fh:
@@ -247,7 +247,7 @@ def write_purity_ploidy(purple_purity_tsv, sample, out_dir):
     return purity, ploidy
 
 
-# ── PURPLE CNV → SVclone Battenberg-like CNV TSV ─────────────────────────────
+# PURPLE CNV → SVclone Battenberg-like CNV TSV ==========
 def write_cnv(purple_cnv_tsv, out_path):
     """
     PURPLE cnv.somatic.tsv → SVclone Battenberg format.
@@ -280,7 +280,7 @@ def write_cnv(purple_cnv_tsv, out_path):
     print(f"  Wrote {n} CNV segments to {out_path}")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main ==========
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)

@@ -11,10 +11,15 @@ suppressPackageStartupMessages({
   library(IRanges)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 
@@ -22,7 +27,7 @@ BIN_SIZE <- 1e6L
 
 MAIN_CHROMS <- paste0("chr", c(1:22, "X"))
 
-# ── Load data ─────────────────────────────────────────────────────────────────
+# Load data ====================================================================
 cat("[1] Loading annotated somatic aDMR...\n")
 admr_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 cat(sprintf("  %d rows\n", nrow(admr_dt)))
@@ -32,7 +37,7 @@ sv_dt <- fread(file.path(DMR_SVS_ROOT, "sv_tad_ctcf_annotation.csv.gz"))
 sv_dt <- sv_dt[seqnames %in% MAIN_CHROMS]
 cat(sprintf("  %d SV breakpoints, %d patients\n", nrow(sv_dt), uniqueN(sv_dt$sample)))
 
-# ── 1Mb bin density ───────────────────────────────────────────────────────────
+# 1Mb bin density ==============================================================
 cat("[3] Computing 1Mb bin density...\n")
 
 make_bins <- function(chrom_lens, bin_size) {
@@ -58,19 +63,19 @@ bins_dt[, n_sv_bp := countOverlaps(bins_gr, sv_gr)]
 
 # SegDup overlap per bin (for track comparison)
 segdup_gr <- rtracklayer::import.bed(
-  "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
+  file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 ) |> keepStandardChromosomes(pruning.mode = "coarse")
 segdup_gr <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
 bins_dt[, pct_segdup := countOverlaps(bins_gr, segdup_gr) / width(bins_gr) * BIN_SIZE]
 
-# ── SV type × CNV class cross-table ──────────────────────────────────────────
+# SV type x CNV class cross-table ==============================================
 cat("[4] SV type x CNV class cross-table...\n")
 sv_cross <- sv_dt[, .N, by = .(geom_type, cnv_class)]
 setorder(sv_cross, geom_type, cnv_class)
 cat("\nSV type x CNV class:\n")
 print(dcast(sv_cross, geom_type ~ cnv_class, value.var = "N", fill = 0L))
 
-# ── Somatic aDMR width and nCG summary ────────────────────────────────────────
+# Somatic aDMR width and nCG summary ===========================================
 cat("[5] Somatic aDMR width/nCG summary...\n")
 admr_dt[, width := end - start + 1L]
 
@@ -92,7 +97,7 @@ width_summ <- data.frame(
 cat("\nSomatic aDMR width/nCG:\n")
 print(width_summ)
 
-# ── Save ──────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 out_list <- list(
   bin_density  = bins_dt,
   sv_cross     = sv_cross,
@@ -104,7 +109,5 @@ fwrite(sv_cross,    file.path(OUT_ROOT, "distribution_sv_cross.csv"))
 fwrite(as.data.table(width_summ), file.path(OUT_ROOT, "distribution_summary.csv"))
 
 cat("\nSaved: distribution_bin_density.csv.gz, distribution_sv_cross.csv, distribution_summary.csv\n")
-
-log_decision("01_distribution: 1Mb bin density (SV/aDMR/segdup), SV type x CNV cross-table, aDMR width/nCG summary computed")
 
 cat("=== Done: 01_distribution.R ===\n")

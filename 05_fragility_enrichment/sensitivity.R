@@ -10,10 +10,15 @@ suppressPackageStartupMessages({
   library(rtracklayer)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 
@@ -23,7 +28,7 @@ MAIN_CHROMS <- paste0("chr", c(1:22, "X"))
 
 DIST_CUTOFFS_KB <- c(1L, 10L, 50L, 100L)  # distances to test
 
-REF_ROOT   <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT   <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 LAD_BED    <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 
@@ -33,7 +38,7 @@ segdup_gr <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
 lad_gr    <- import.bed(LAD_BED)    |> keepStandardChromosomes(pruning.mode = "coarse")
 lad_gr    <- lad_gr[seqnames(lad_gr) %in% MAIN_CHROMS]
 
-# ── Load annotated somatic aDMR (already has segdup/lad/b_compartment) ────────
+# Load annotated somatic aDMR (already has segdup/lad/b_compartment) ===========
 cat("[1] Loading annotated somatic aDMR...\n")
 admr_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 admr_dt <- admr_dt[seqnames %in% MAIN_CHROMS]
@@ -51,7 +56,7 @@ sv_gr_all <- makeGRangesFromDataFrame(
 )
 cat(sprintf("  %d SV breakpoints\n", length(sv_gr_all)))
 
-# ── Pre-compute aDMR subsets for each distance cutoff ────────────────────────
+# Pre-compute aDMR subsets for each distance cutoff ============================
 cat("[3] Computing aDMR subsets per distance cutoff...\n")
 admr_far <- lapply(DIST_CUTOFFS_KB, function(d_kb) {
   sv_flanked <- suppressWarnings(
@@ -65,7 +70,7 @@ admr_far <- lapply(DIST_CUTOFFS_KB, function(d_kb) {
 })
 names(admr_far) <- paste0(DIST_CUTOFFS_KB, "kb")
 
-# ── Width+chr-matched control generator ───────────────────────────────────────
+# Width+chr-matched control generator ==========================================
 make_controls <- function(case_gr, n_mult, seed) {
   set.seed(seed)
   ctrl_list <- lapply(unique(as.character(seqnames(case_gr))), function(chr) {
@@ -93,7 +98,7 @@ make_controls <- function(case_gr, n_mult, seed) {
   ctrl_gr
 }
 
-# ── GLM helper (uses pre-computed annotations on case_gr) ────────────────────
+# GLM helper (uses pre-computed annotations on case_gr) ========================
 run_c23_glm <- function(case_gr, ctrl_gr, seed) {
   df_case <- as.data.frame(mcols(case_gr))
   df_case$is_case    <- 1L
@@ -130,7 +135,7 @@ run_c23_glm <- function(case_gr, ctrl_gr, seed) {
   )
 }
 
-# ── Run across cutoffs and seeds ──────────────────────────────────────────────
+# Run across cutoffs and seeds =================================================
 cat("[4] Running GLMs...\n")
 results <- list()
 
@@ -149,11 +154,11 @@ for (d_label in names(admr_far)) {
   cat(sprintf("  Done: %d\n", length(ag)))
 }
 
-# ── Also pull existing 10kb results from segdup_or_table.csv for comparison ──
+# Also pull existing 10kb results from segdup_or_table.csv for comparison ======
 existing <- fread(file.path(OUT_ROOT, "segdup_or_table.csv"))
 c23_existing <- existing[claim == "C23_admr_sv_far_segdup" & term == "segdup"]
 
-# ── Summarize ─────────────────────────────────────────────────────────────────
+# Summarize ====================================================================
 results_dt <- rbindlist(results, fill = TRUE)
 segdup_dt  <- results_dt[term == "segdup"]
 
@@ -179,5 +184,4 @@ print(c23_existing[, .(seed, OR, CI_lo, CI_hi, p_val, n_case)])
 fwrite(results_dt, file.path(OUT_ROOT, "c23_sensitivity.csv"))
 cat(sprintf("\nSaved: c23_sensitivity.csv (%d rows)\n", nrow(results_dt)))
 
-log_decision("02b_c23_sensitivity: C23 distance sensitivity 1/10/50/100kb; all ORs reported")
 cat("=== Done: 02b_c23_sensitivity.R ===\n")

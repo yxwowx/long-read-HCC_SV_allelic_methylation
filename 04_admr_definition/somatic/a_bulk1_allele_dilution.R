@@ -27,16 +27,23 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(123)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-CONF_DMR <- "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD      <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW   <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI      <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+CONF_DMR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz")
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD      <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW   <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI      <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR  <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
@@ -45,7 +52,7 @@ THRESHOLDS   <- c(0.10, 0.15, 0.20, 0.25, 0.30)
 TAU_HEADLINE <- 0.15
 C17_OR       <- 1.05   # TCGA-LIHC 450K reference OR from C17
 
-# ── 1. Load and aggregate phased aDMR loci ────────────────────────────────────
+# 1. Load and aggregate phased aDMR loci =======================================
 message("Loading confident_dmr_per_patient.csv.gz ...")
 raw <- fread(CONF_DMR, data.table = FALSE)
 cat(sprintf("Raw rows: %d  unique patients: %d\n",
@@ -77,7 +84,7 @@ cat(sprintf("Unique phased aDMR loci: %d\n", nrow(loci)))
 cat(sprintf("  Median |HP1-HP2|_max:         %.3f\n", median(loci$hp_abs_diff_max)))
 cat(sprintf("  Median |(sim_bulk-normal)|_max: %.3f\n", median(loci$bulk_abs_diff_max)))
 
-# ── 2. Preload reference GRanges and chrom sizes ──────────────────────────────
+# 2. Preload reference GRanges and chrom sizes =================================
 message("Loading SegDup, LAD, and chrom sizes ...")
 segdup_gr   <- import(SEGDUP, format = "BED"); seqlevelsStyle(segdup_gr) <- "UCSC"
 lad_gr      <- import(LAD,    format = "BED"); seqlevelsStyle(lad_gr)    <- "UCSC"
@@ -85,7 +92,7 @@ chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z"), data.table = F
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
   select(chr, len)
 
-# ── 3. Helpers ────────────────────────────────────────────────────────────────
+# 3. Helpers ===================================================================
 
 # Build GRanges for a locus subset + matched random controls, annotate SegDup+LAD
 build_annotated <- function(loci_sub, seed_offset = 0) {
@@ -146,7 +153,7 @@ run_enrichment <- function(all_gr, arm_label, tau_val) {
   res
 }
 
-# ── 4. Threshold sweep ────────────────────────────────────────────────────────
+# 4. Threshold sweep ===========================================================
 message("Running threshold sweep (AS vs bulk) ...")
 sweep_list <- list()
 
@@ -176,7 +183,7 @@ cat("\n=== SegDup Fisher: threshold sweep ===\n")
 print(sweep_df |> filter(feature == "SegDup") |>
       select(arm, tau, n_case, pct_case, pct_ctrl, OR, CI_lo, CI_hi, p, sig))
 
-# ── 5. Multivariate GLM at tau=0.15 (PC1 extracted once) ─────────────────────
+# 5. Multivariate GLM at tau=0.15 (PC1 extracted once) =========================
 message("Extracting PC1 for multivariate GLM at tau=0.15 ...")
 
 run_glm <- function(loci_sub, arm_label, seed_offset) {
@@ -226,7 +233,7 @@ glm_df   <- bind_rows(glm_as, glm_bulk)
 cat("\n=== Multivariate GLM at tau=0.15 ===\n")
 print(glm_df |> select(arm, feature, n_case, OR, CI_lo, CI_hi, p, sig))
 
-# ── 6. Headline table ─────────────────────────────────────────────────────────
+# 6. Headline table ============================================================
 headline_df <- bind_rows(
   sweep_df |> filter(tau == TAU_HEADLINE) |>
     mutate(model = "Fisher", n_case = as.integer(n_case), n_ctrl = as.integer(n_ctrl)),
@@ -238,7 +245,7 @@ headline_df <- bind_rows(
 cat("\n=== Headline (tau=0.15) ===\n")
 print(headline_df |> select(arm, model, feature, n_case, OR, CI_lo, CI_hi, p, sig))
 
-# ── 7. Locus overlap at tau=0.15 ─────────────────────────────────────────────
+# 7. Locus overlap at tau=0.15 =================================================
 loci_hl <- loci |>
   mutate(
     is_as   = hp_abs_diff_max   >= TAU_HEADLINE,
@@ -270,14 +277,14 @@ pct_as_lost <- round(
   1)
 cat(sprintf("\n%% of AS-instability loci invisible to bulk: %.1f%%\n", pct_as_lost))
 
-# ── 8. Save ───────────────────────────────────────────────────────────────────
+# 8. Save ======================================================================
 fwrite(headline_df, file.path(OUT_DIR, "a_bulk1_or_comparison.csv"))
 fwrite(sweep_df,    file.path(OUT_DIR, "a_bulk1_threshold_sweep.csv"))
 fwrite(overlap_tab, file.path(OUT_DIR, "a_bulk1_locus_overlap.csv"))
 fwrite(glm_df,      file.path(OUT_DIR, "a_bulk1_glm.csv"))
 message("Wrote: a_bulk1_or_comparison.csv, a_bulk1_threshold_sweep.csv, a_bulk1_locus_overlap.csv, a_bulk1_glm.csv")
 
-# ── 9. Figure ─────────────────────────────────────────────────────────────────
+# 9. Figure ====================================================================
 message("Generating figures ...")
 
 seg_headline <- sweep_df |>

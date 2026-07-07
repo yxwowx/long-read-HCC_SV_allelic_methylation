@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# =============================================================================
 # Figure S6. Haplotype HYPO-concordance — the central anti-cis-induction test
 #
 # Purpose:
@@ -24,18 +23,19 @@
 #      confidence-relevant stratifier that exists upstream of any filtering.
 #
 # Data sources:
-#   PATHS$pb_pairs   (sv_admr_hp_concordance_pairs.csv.gz): patient_id, dist_bp,
-#                    sv_type, sv_tier, sv_hp, hp_delta, admr_hypo_hp, concordant
-#   PATHS$tier_*     (gold/silver/bronze_tier.csv): patient_code, sv_tier,
-#                    direction_match (logical), bp_dist, delta_beta_bulk
+#   PATHS$pb_pairs (phaseblock_pairs.csv, n=39,212): patient_id, dist_bp,
+#                  sv_type, sv_tier, sv_hp, hp_delta, admr_hypo_hp, concordant
+#   (an earlier version of this script read the superseded n=8,616
+#   sv_admr_hp_concordance_pairs.csv.gz; verified in docs/OPEN_ISSUES.md
+#   issue #1 that this script's *code* already correctly recomputes
+#   dmatch = sv_minus_wt < 0 against the current phaseblock_pairs.csv)
 #
 # Statistical notes (recorded in figure_captions.md, not in the figure):
 #   Overall GLMER:  glmer(direction_match ~ 1 + (1|patient_code), family=binomial)
 #   Per-bin:        binom.test(n_concordant, n_total, p=0.5)$p.value
 #
 # Run:
-#   mamba run -n renv Rscript viz/v4/figS6_haplotype_concordance.R
-# =============================================================================
+#   mamba run -n renv Rscript haplotype_concordance.R
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -46,17 +46,54 @@ suppressPackageStartupMessages({
   library(forcats)
   library(lme4)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── SCRIPT_DIR detection ──────────────────────────────────────────────────────
-get_script_dir <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  f <- sub("^--file=", "", args[grep("^--file=", args)])
-  if (length(f)) return(dirname(normalizePath(f)))
-  if (!is.null(sys.frame(1)$ofile)) return(dirname(normalizePath(sys.frame(1)$ofile)))
-  "~/script/SV-DMR/somatic_AMR/viz/v1"
+# Minimal local helpers/constants (this script's figure-export plumbing
+# originally came from a private viz/shared_theme.R framework not included
+# in this repo; theme_hcc_pub is a thin alias for shared_utils.R's theme_hcc)
+theme_hcc_pub <- theme_hcc
+FONT_MIN  <- 8
+FONT_TAG  <- 12
+FIG_W_MM  <- 180
+
+setup_fig_dirs <- function(figs_root) {
+  dirs <- file.path(figs_root, c("panels", "rds", "png", "logs"))
+  invisible(lapply(dirs, dir.create, recursive = TRUE, showWarnings = FALSE))
+  list(panels = file.path(figs_root, "panels"),
+       rds    = file.path(figs_root, "rds"),
+       png    = file.path(figs_root, "png"),
+       logs   = file.path(figs_root, "logs"))
 }
-SCRIPT_DIR <- get_script_dir()
-source(file.path(SCRIPT_DIR, "shared_theme.R"))
+
+placeholder_panel <- function(msg, title = "") {
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = msg, color = "grey60", size = 3.5) +
+    theme_void() + labs(title = title)
+}
+
+build_panel <- function(label, fn, ...) {
+  tryCatch(fn(...), error = function(e) {
+    message(sprintf("[%s] panel failed: %s", label, conditionMessage(e)))
+    placeholder_panel(msg = sprintf("Panel %s failed:\n%s", label, conditionMessage(e)))
+  })
+}
+
+save_panel <- function(p, name, dirs, width = 6, height = 5) {
+  ggsave(file.path(dirs$panels, paste0(name, ".pdf")), p, width = width, height = height)
+  ggsave(file.path(dirs$png, paste0(name, ".png")), p, width = width, height = height, dpi = 150)
+  invisible(NULL)
+}
+
+PATHS <- list(
+  pb_pairs  = file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/phaseblock_pairs.csv"),
+  figs_root = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/figs/v4")
+)
 DIRS <- setup_fig_dirs(PATHS$figs_root)
 
 log_con <- file(file.path(DIRS$logs, "figS6_haplotype_concordance.log"), open = "wt")
@@ -67,7 +104,7 @@ cat("=== Figure S6 Haplotype HYPO-concordance (v4) ===\n")
 CONC_HI <- "#E74C3C"   # above 50% (cis-consistent)
 CONC_LO <- "#3498DB"   # below/at 50% (null-consistent)
 
-# ── Load pair-level concordance data ──────────────────────────────────────────
+# Load pair-level concordance data =============================================
 pb <- safe_fread(PATHS$pb_pairs)
 
 # Normalise to a common schema: patient, dist_bp, concordant(0/1), tier, sv_type
@@ -132,7 +169,7 @@ cat(sprintf("[overall] concordance = %.1f%% (GLMER intercept p = %s)\n",
             100 * overall_frac,
             ifelse(is.na(glmer_p), "NA", sprintf("%.3f", glmer_p))))
 
-# ── Panel A: per-patient concordance bar ──────────────────────────────────────
+# Panel A: per-patient concordance bar =========================================
 make_panelA <- function(d, overall) {
   if (is.null(d)) stop("no pair data")
   pp <- d[, .(n = .N, conc = mean(dmatch)), by = patient]
@@ -160,7 +197,7 @@ make_panelA <- function(d, overall) {
     theme_hcc_pub
 }
 
-# ── Panel B: distance-stratified concordance with Clopper-Pearson CI ──────────
+# Panel B: distance-stratified concordance with Clopper-Pearson CI =============
 DIST_BREAKS <- c(-Inf, 50e3, 200e3, 500e3, Inf)
 DIST_LABS   <- c("≤50 kb", "50–200 kb", "200–500 kb", ">500 kb")
 BIN_COLORS  <- c("≤50 kb"      = "#1B6CA8",
@@ -199,7 +236,7 @@ make_panelB <- function(d) {
     theme(axis.text.x = element_text(angle = 25, hjust = 1))
 }
 
-# ── Panel C: tier-stratified concordance (Gold/Silver/Bronze) ─────────────────
+# Panel C: tier-stratified concordance (Gold/Silver/Bronze) ====================
 # Uses the "tier" column from phaseblock_pairs.csv (mapped to sv_tier in prep_pairs).
 # Tests whether ~50% null holds across pair-confidence strata — rules out that
 # the null is an artifact of low-confidence (Bronze) pairs dominating.
@@ -240,7 +277,7 @@ make_panelC <- function(d) {
     theme(axis.text.x = element_text(size = FONT_MIN))
 }
 
-# ── Build panels (graceful fallback) ──────────────────────────────────────────
+# Build panels (graceful fallback) =============================================
 if (!HAVE_PAIRS) {
   pA <- build_panel("A", function() placeholder_panel(
           msg = "pb_pairs unavailable\n(phase-block pairs pending)"))
@@ -257,7 +294,7 @@ if (!HAVE_PAIRS) {
   pC <- build_panel("C", make_panelC, pb_dt)
 }
 
-# ── Persist individual panels ─────────────────────────────────────────────────
+# Persist individual panels ====================================================
 saveRDS(pA, file.path(DIRS$panels, "figS6_A_per_patient.rds"))
 saveRDS(pB, file.path(DIRS$panels, "figS6_B_distance.rds"))
 saveRDS(pC, file.path(DIRS$panels, "figS6_C_boundary_class.rds"))
@@ -265,7 +302,7 @@ save_panel(pA, "figS6_A_per_patient",    DIRS, width = 6, height = 5)
 save_panel(pB, "figS6_B_distance",       DIRS, width = 5, height = 4)
 save_panel(pC, "figS6_C_boundary_class", DIRS, width = 6, height = 4)
 
-# ── Assemble ──────────────────────────────────────────────────────────────────
+# Assemble =====================================================================
 figS6 <- (pA / (pB | pC)) +
   plot_layout(heights = c(1.25, 1)) +
   plot_annotation(tag_levels = "A") &
@@ -278,7 +315,3 @@ ggsave(file.path(DIRS$png, "figS6_haplotype_concordance.png"), figS6,
        width = FIG_W_MM, height = FIG_W_MM, units = "mm", dpi = 300, bg = "white")
 cat(sprintf("[Output] figS6 -> %s\n",
             file.path(DIRS$png, "figS6_haplotype_concordance.png")))
-
-log_decision(sprintf(
-  "figS6_haplotype_concordance.R: per-patient/distance/tier-bulk HYPO-concordance; overall=%.1f%% GLMER p=%s (null-consistent, anti-cis)",
-  100 * overall_frac, ifelse(is.na(glmer_p), "NA", sprintf("%.3f", glmer_p))))

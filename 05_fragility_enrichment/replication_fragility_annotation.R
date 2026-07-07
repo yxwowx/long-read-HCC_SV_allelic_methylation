@@ -11,20 +11,26 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ---- Paths -------------------------------------------------------------------
-REF      <- "/node200data/kachungk/reference/GRCh38"
+# Paths ========================================================================
+REF      <- Sys.getenv("REFERENCE_DIR")
 LAD_BED  <- file.path(REF, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 SEGDUP   <- file.path(REF, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 RMSK     <- file.path(REF, "LOLACore_180423/hg38/ucsc_features/regions/rmsk.bed")
 PC1_BW   <- file.path(REF, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
-SV_CSV   <- "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz"
-GOLD_CSV <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_CSV <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs"
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+SV_CSV   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz")
+GOLD_CSV <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_CSV <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 
-# ---- Load annotation tracks --------------------------------------------------
+# Load annotation tracks =======================================================
 cat("Loading annotation tracks...\n")
 
 lad_gr <- tryCatch({
@@ -45,7 +51,7 @@ rmsk_gr <- tryCatch({
 cat(sprintf("LAD regions: %d | SegDup: %d | rmsk: %d\n",
             length(lad_gr), length(segdup_gr), length(rmsk_gr)))
 
-# ---- Load SV breakpoints -----------------------------------------------------
+# Load SV breakpoints ==========================================================
 cat("Loading SV breakpoints...\n")
 sv <- fread(SV_CSV)
 sv <- sv[!is.na(start) & seqnames %in% paste0("chr", c(1:22, "X","Y"))]
@@ -58,21 +64,21 @@ cat(sprintf("SV breakpoints: %d unique (from %d rows)\n", nrow(sv_bp), nrow(sv))
 sv_gr <- GRanges(sv_bp$seqnames, IRanges(sv_bp$start, sv_bp$start))
 mcols(sv_gr) <- sv_bp[, .(bp_id, sv_tier, stratification, cnv_class, svtype, sample)]
 
-# ---- Annotate: LAD overlap ---------------------------------------------------
+# Annotate: LAD overlap ========================================================
 cat("Annotating LAD overlap...\n")
 sv_bp[, lad_overlap := countOverlaps(sv_gr, lad_gr) > 0]
 
-# ---- Annotate: SegDup overlap ------------------------------------------------
+# Annotate: SegDup overlap =====================================================
 cat("Annotating SegDup overlap...\n")
 sv_bp[, segdup_overlap := countOverlaps(sv_gr, segdup_gr) > 0]
 
-# ---- Annotate: repeat density in ±50kb --------------------------------------
+# Annotate: repeat density in +/-50kb ==========================================
 cat("Annotating repeat density...\n")
 sv_win <- GRanges(sv_bp$seqnames, IRanges(pmax(1, sv_bp$start - 50000),
                                            sv_bp$start + 50000))
 sv_bp[, repeat_density := countOverlaps(sv_win, rmsk_gr)]
 
-# ---- Annotate: HepG2 PC1 (B-compartment = negative) -------------------------
+# Annotate: HepG2 PC1 (B-compartment = negative) ===============================
 cat("Annotating HepG2 PC1...\n")
 pc1_bw <- import(PC1_BW, as = "GRanges")
 pc1_hits <- findOverlaps(sv_gr, pc1_bw)
@@ -84,13 +90,13 @@ sv_bp[, b_compartment := pc1_score < 0]   # TRUE = B compartment = late replicat
 cat(sprintf("PC1 annotated: %d/%d breakpoints\n",
             sv_bp[!is.na(pc1_score), .N], nrow(sv_bp)))
 
-# ---- Group tiers: boundary (2-5) vs non_boundary (6) ------------------------
+# Group tiers: boundary (2-5) vs non_boundary (6) ==============================
 # sv_tier: 2=TAD+CTCF, 3=TAD-only, 4=CTCF-only, 5=near-boundary, 6=non-boundary
 sv_bp[, tier_group := ifelse(sv_tier == 6, "Non-boundary", "Boundary")]
 sv_bp[, sv_tier_label := factor(paste0("Tier ", sv_tier),
                                  levels = paste0("Tier ", 2:6))]
 
-# ---- Statistical tests -------------------------------------------------------
+# Statistical tests ============================================================
 cat("\n=== Statistical Tests ===\n")
 
 # LAD enrichment: Fisher test by tier group
@@ -133,7 +139,7 @@ cat(sprintf("Repeat density: Non-boundary median=%.0f vs Boundary median=%.0f | 
             sv_bp[tier_group=="Boundary",     median(repeat_density)],
             wt_rep$p.value))
 
-# ---- Annotate recurrent Gold/Silver loci -------------------------------------
+# Annotate recurrent Gold/Silver loci ==========================================
 cat("\n=== Recurrent Loci Annotation ===\n")
 gold   <- fread(GOLD_CSV)
 silver <- fread(SILV_CSV)
@@ -166,7 +172,7 @@ zoom_loci[, repeat_dens := countOverlaps(zoom_win, rmsk_gr)]
 cat("Recurrent locus annotations:\n")
 print(zoom_loci[, .(label, lad, b_comp, pc1, segdup, repeat_dens)])
 
-# ---- Save results table ------------------------------------------------------
+# Save results table ===========================================================
 fwrite(sv_bp[, .(bp_id, seqnames, start, sv_tier, tier_group, stratification,
                   cnv_class, svtype, sample, lad_overlap, b_compartment,
                   pc1_score, segdup_overlap, repeat_density)],
@@ -174,10 +180,10 @@ fwrite(sv_bp[, .(bp_id, seqnames, start, sv_tier, tier_group, stratification,
 
 fwrite(zoom_loci, file.path(OUT_DIR, "result/recurrent_loci_fragility.csv"))
 
-# ---- Figures -----------------------------------------------------------------
+# Figures ======================================================================
 cat("\nBuilding figures...\n")
 
-# --- Panel A: PC1 violin by tier group ----------------------------------------
+# Panel A: PC1 violin by tier group ============================================
 sv_plot <- sv_bp[!is.na(pc1_score)]
 pa <- ggplot(sv_plot, aes(x = tier_group, y = pc1_score, fill = tier_group)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
@@ -192,7 +198,7 @@ pa <- ggplot(sv_plot, aes(x = tier_group, y = pc1_score, fill = tier_group)) +
   theme_bw(base_size = 10) +
   theme(legend.position = "none")
 
-# --- Panel B: Stacked bar — LAD + B-comp + SegDup rate by tier group ----------
+# Panel B: Stacked bar — LAD + B-comp + SegDup rate by tier group ==============
 sv_bp2 <- sv_bp[!is.na(lad_overlap) & !is.na(b_compartment)]
 bar_dt <- rbind(
   sv_bp2[, .(tier_group, feature = "LAD overlap",     value = lad_overlap)],
@@ -212,7 +218,7 @@ pb <- ggplot(bar_sum, aes(x = feature, y = pct, fill = tier_group)) +
   theme_bw(base_size = 10) +
   theme(axis.text.x = element_text(angle = 20, hjust = 1))
 
-# --- Panel C: Repeat density boxplot by tier group ----------------------------
+# Panel C: Repeat density boxplot by tier group ================================
 pc <- ggplot(sv_bp, aes(x = tier_group, y = log10(repeat_density + 1), fill = tier_group)) +
   geom_violin(alpha = 0.7, linewidth = 0.4) +
   geom_boxplot(width = 0.15, outlier.size = 0.5, fill = "white", linewidth = 0.4) +
@@ -225,7 +231,7 @@ pc <- ggplot(sv_bp, aes(x = tier_group, y = log10(repeat_density + 1), fill = ti
   theme_bw(base_size = 10) +
   theme(legend.position = "none")
 
-# --- Panel D: Per-tier breakdown of B-compartment + LAD rate ------------------
+# Panel D: Per-tier breakdown of B-compartment + LAD rate ======================
 tier_sum <- sv_bp[!is.na(b_compartment),
                    .(pct_b   = mean(b_compartment, na.rm=TRUE) * 100,
                      pct_lad = mean(lad_overlap, na.rm=TRUE)   * 100,
@@ -248,7 +254,7 @@ pd <- ggplot(tier_long, aes(x = sv_tier_label, y = pct, color = feature, group =
        color = NULL) +
   theme_bw(base_size = 10)
 
-# --- Panel E: Recurrent loci dot plot -----------------------------------------
+# Panel E: Recurrent loci dot plot =============================================
 zoom_long <- melt(zoom_loci[, .(label, lad, b_comp, segdup)],
                   id.vars = "label", variable.name = "feature", value.name = "present")
 zoom_long[, feature := factor(feature,
@@ -267,7 +273,7 @@ pe <- ggplot(zoom_long, aes(x = feature, y = label, fill = present)) +
   theme(axis.text.x = element_text(angle = 20, hjust = 1),
         legend.position = "none")
 
-# ---- Combine and save --------------------------------------------------------
+# Combine and save =============================================================
 top <- (pa | pb | pc) + plot_layout(widths = c(1,1,1))
 bot <- (pd | pe) + plot_layout(widths = c(2, 1.2))
 combined <- top / bot + plot_layout(heights = c(1.2, 1)) +
@@ -282,14 +288,4 @@ out_png <- file.path(OUT_DIR, "figs/png/fig_replication_fragility.png")
 ggsave(out_png, combined, width = 14, height = 9, dpi = 150)
 cat(sprintf("Saved: %s\n", out_png))
 
-# ---- Log ---------------------------------------------------------------------
-log_msg <- sprintf(
-  "[%s] replication_fragility_annotation.R: LAD Fisher p=%.4f OR=%.2f | PC1 Wilcoxon p=%.4f | B-comp Fisher p=%.4f OR=%.2f | saved %s",
-  format(Sys.time(), "%Y-%m-%d"),
-  ft_lad$p.value, as.numeric(ft_lad$estimate),
-  wt_pc1$p.value,
-  ft_bc$p.value, as.numeric(ft_bc$estimate),
-  out_png
-)
-cat(log_msg, "\n", file = LOG_FILE, append = TRUE)
 cat("Done.\n")

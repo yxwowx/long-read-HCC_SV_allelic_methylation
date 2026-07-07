@@ -11,9 +11,13 @@ suppressPackageStartupMessages({
   library(S4Vectors)
   library(optparse)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 option_list <- list(
   make_option(c("-i", "--input_dir"), type = "character"),
@@ -23,11 +27,11 @@ option_list <- list(
 opt <- parse_args(OptionParser(option_list = option_list))
 dir.create(opt$outdir, showWarnings = FALSE, recursive = TRUE)
 
-# Basic Objects & Functions ----------------------------------------------
-## Common Functions ------------------------------------------------------
+# Basic Objects & Functions ====================================================
+# Common Functions =============================================================
 
 #' Filter direction-consistent hits
-#' @description gr1의 diff.Methy 방향이 gr2의 diff.Methy 일치하는 hit만 반환
+#' @description Returns only the hits where gr1's diff.Methy direction agrees with gr2's diff.Methy direction
 direction_consistent_hits <- function(hits, gr1, gr2) {
   if (length(hits) == 0) return(hits)
   dir1 <- sign(gr1$diff.Methy[queryHits(hits)])
@@ -35,7 +39,7 @@ direction_consistent_hits <- function(hits, gr1, gr2) {
   hits[dir1 == dir2]
 }
 
-#' Merged region 기준 recurrence 카운트 (환자별 binary matrix)
+#' Recurrence count per merged region (per-patient binary matrix)
 count_recurrence <- function(merged, per_patient_list, min_bp = 1L) {
   count_mat <- vapply(per_patient_list, function(gr) {
     as.integer(countOverlaps(merged, gr, minoverlap = min_bp) > 0)
@@ -43,12 +47,12 @@ count_recurrence <- function(merged, per_patient_list, min_bp = 1L) {
   rowSums(count_mat)
 }
 
-#' mingapwidth 결정을 위한 DMR 크기 및 간격 분포 분석 후 결과 report
+#' Analyze DMR size and gap distribution to inform the mingapwidth choice, and report the result
 diagnose_mingapwidth <- function(dmr_list,
                                candidate_gaps = c(200, 500, 1000, 2000)) {
   all_dmr <- do.call(c, unname(dmr_list))
 
-  # 1. DMR size distribution  --------------------------------------------
+  # 1. DMR size distribution ===================================================
   dmr_widths <- width(all_dmr)
   cat("=== DMR size distribution ===\n")
   cat(sprintf("  median : %d bp\n",  as.integer(median(dmr_widths))))
@@ -59,7 +63,7 @@ diagnose_mingapwidth <- function(dmr_list,
   cat(sprintf("  90th   : %d bp\n",  as.integer(quantile(dmr_widths, 0.90))))
   cat(sprintf("  max    : %d bp\n",  max(dmr_widths)))
 
-  # 2. Intergenic DMR gap distribution  -----------------------------------
+  # 2. Intergenic DMR gap distribution =========================================
   gaps <- unlist(lapply(split(all_dmr, seqnames(all_dmr)), function(chr_dmr) {
     if (length(chr_dmr) < 2) return(NULL)
     chr_sorted <- sort(chr_dmr)
@@ -76,7 +80,7 @@ diagnose_mingapwidth <- function(dmr_list,
   cat(sprintf("  10th   : %d bp\n",  as.integer(quantile(gaps, 0.10))))
   cat(sprintf("  5th    : %d bp\n",  as.integer(quantile(gaps, 0.05))))
 
-  # 3. Simulation of candidate gap effects --------------------------------
+  # 3. Simulation of candidate gap effects =====================================
   cat("\n=== mingapwidth candidate gap effects ===\n")
   cat(sprintf("%-12s %10s %10s %10s\n",
               "mingapwidth", "merged_n", "comparsion to original(%)", "median_w(bp)"))
@@ -102,7 +106,7 @@ diagnose_mingapwidth <- function(dmr_list,
                 res_df$median_width[i]))
   }
 
-  # 4. Set cutoff based on statistics ----------------------------------------
+  # 4. Set cutoff based on statistics ==========================================
   # Recommended gap: 10th percentile
   # 10% gap: high posibility of located in same regulatory unit
   recommended <- as.integer(quantile(gaps, 0.10))
@@ -117,7 +121,7 @@ diagnose_mingapwidth <- function(dmr_list,
   ))
 }
 
-## Load datasets for each sample -----------------------------------------
+# Load datasets for each sample ================================================
 setwd(opt$input_dir)
 # Load DMRs for each sample and convert lists of data.frames into a GRangelist
 dmr_list <- list.files(
@@ -176,7 +180,7 @@ per_pt_normal_admr <- lapply(normal_admr_files, function(f) {
   split(mcols(.)$sample)
 per_pt_normal_admr <- endoapply(per_pt_normal_admr, filter_dmr_region)
 
-## Parameters and Common Theme --------------------------------------------
+# Parameters and Common Theme ==================================================
 PATIENT_IDS <- names(per_pt_dmr)
 
 COLORS <- list(
@@ -187,7 +191,7 @@ COLORS <- list(
 
 NORM_ADMR_OVERLAP_PCT <- 0.10   # normal aDMR exclusion standard (based on tumor aDMR)
 
-# Somatic aDMR: Exclude tumor aDMR regions that overlap with normal aDMR by ≥10% -----------
+# Somatic aDMR: exclude tumor regions overlapping normal aDMR by >=10% =========
 per_pt_somatic_admr <- lapply(PATIENT_IDS, function(pt) {
   tadmr     <- per_pt_admr[[pt]]
   norm_admr <- per_pt_normal_admr[[pt]]
@@ -217,14 +221,14 @@ per_pt_somatic_admr <- lapply(PATIENT_IDS, function(pt) {
   somatic_df <- lapply(per_pt_somatic_admr, as.data.frame) %>% bind_rows()
   fwrite(somatic_df, file.path(opt$outdir, "somatic_admr_per_patient.csv.gz"),
          row.names = FALSE, quote = FALSE)
-  cat(sprintf("저장: %s\n", file.path(opt$outdir, "somatic_admr_per_patient.csv.gz")))
+  cat(sprintf("Saved: %s\n", file.path(opt$outdir, "somatic_admr_per_patient.csv.gz")))
   rm(n_t, n_s, somatic_df)
 }
 
-# STEP 1: tumor-normal DMR ∩ tumor aDMR in individual patients -----
+# STEP 1: tumor-normal DMR x tumor aDMR in individual patients =================
 # output: confident_dmr, layer_counts
 
-## Reciprocal overlap of tumor-normal DMR ∩ tumor aDMR ---------------
+# Reciprocal overlap of tumor-normal DMR x tumor aDMR ==========================
 # Parameters for reciprocal overlap
 MIN_OVERLAP_BP  <- 100L     # minimum absolute overlap (bp)
 RECIPROCAL_PCT  <- 0.30    # minimum 30% overlap in both regions
@@ -341,7 +345,7 @@ confident_dmr <- lapply(PATIENT_IDS, function(pt) {
       patient_id     = pt,
       delta_tumor    = db_t,
       delta_normal   = db_n,
-      abs_diff       = abs(db_t) - abs(db_n),   # >0: tumor에서 증폭
+      abs_diff       = abs(db_t) - abs(db_n),   # >0: larger in tumor than in normal
       direction_flip = sign(db_t) != sign(db_n)
     )
   })
@@ -396,8 +400,8 @@ cat(sprintf(
   sum(layer_counts$n_confident), mean(layer_counts$pct_dmr_with_admr)
 ))
 
-# STEP 2: Cohort-level recurrence analysis of confident DMRs --------
-## Merge confident DMRs to make standardized regions ----------------
+# STEP 2: Cohort-level recurrence analysis of confident DMRs ===================
+# Merge confident DMRs to make standardized regions ============================
 
 per_pt_confident_distinct <- confident_dmr %>%
   endoapply(function(gr) {
@@ -424,13 +428,13 @@ merged_regions <- GenomicRanges::reduce(
   min.gapwidth = 500
 )
 
-## Count Recurrence between merged regions 
+# Count Recurrence between merged regions ======================================
 merged_regions$n_patients <- count_recurrence(
   merged_regions, per_pt_confident_distinct, min_bp = MIN_OVERLAP_BP
 )
 merged_regions$pct_patients <- merged_regions$n_patients / length(PATIENT_IDS) * 100
 
-# Step 2: Add recurrence column on confident_dmr --------------------
+# Step 2: Add recurrence column on confident_dmr ===============================
 
 confident_dmr <- lapply(PATIENT_IDS, function(pt) {
   gr <- confident_dmr[[pt]]
@@ -452,7 +456,7 @@ confident_dmr <- lapply(PATIENT_IDS, function(pt) {
 })
 names(confident_dmr) <- PATIENT_IDS
 
-# 확인
+# Check
 cat("recurrence distribution (Total patients pooled):\n")
 all_annotated <- do.call(c, unname(confident_dmr))
 print(table(mcols(all_annotated)$n_patients))
@@ -470,17 +474,17 @@ rm(per_pt_admr, per_pt_dmr, per_pt_normal_admr, per_pt_somatic_admr,
    diag, all_confident, confident_dmr_df)
 gc()
 
-# STEP 3: Check independency of pooled DMR & state consensus dmr =========
+# STEP 3: Check independency of pooled DMR & state consensus dmr ===============
 pooled_dmr <- fread("DSS/DMR/total.hap.DMR.csv.gz", nThread = 4) %>%
   GRanges() %>%
   filter_dmr_region()
 
 
-## Explore recurrence cutoff --------------------------------------
+# Explore recurrence cutoff ====================================================
 RECOMMENDED_N   <- max(3L, ceiling(length(PATIENT_IDS) * 0.25))  # 25%
 DIR_CONSISTENCY_CUTOFF <- 0.80   # Direction consistency cutoff: 80%
 
-# 3-B. Final Consensus DMR based on DSS coordinates ------------
+# 3-B. Final Consensus DMR based on DSS coordinates ============================
 #   Filter 1: n_patients ≥ RECOMMENDED_N
 #   Filter 2:  reciprocal overlap with pooled DMR
 #   Filter 3: direction consistency (Optional, pooled DMR & mean_diff direction concordance into new column)
@@ -517,7 +521,7 @@ cat(sprintf("Direction consistency distribution (pooled DMR and direction consis
             sum(!mcols(all_consensus)$pooled_consistency, na.rm = TRUE),
             sum(is.na(mcols(all_consensus)$pooled_consistency))))
 
-## 3-C. Funnel Statistics summary ---------------------------------------
+# 3-C. Funnel Statistics summary ===============================================
 funnel_stats <- data.frame(
   step = c(
     "1. tumor-normal DMR",

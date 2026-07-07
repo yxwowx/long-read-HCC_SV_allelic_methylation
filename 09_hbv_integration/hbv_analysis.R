@@ -19,7 +19,7 @@
 #   E. SV tier enrichment near HBV BK (Fisher's exact test)
 #   F. dist_to_HBV_BK vs HP|Δβ| Spearman per patient
 #
-# Output : /node200data/kachungk/hcc_data/DMR_SVs/12.HBV_analysis/
+# Output : $HCC_DATA_DIR/DMR_SVs/12.HBV_analysis/
 # Run    : mamba run -n renv Rscript pipeline/12_hbv_analysis.R
 
 suppressPackageStartupMessages({
@@ -34,26 +34,30 @@ suppressPackageStartupMessages({
   library(stringr)
   library(scales)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 option_list <- list(
   make_option("--hbv_chimeric_dir", type = "character",
-    default = "/node200data/kachungk/hcc_data/hg38+HBV/HBV/breakpoint/",
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/HBV/breakpoint/"),
     help    = "Directory with *_chimeric_breakpoint_hm_hbv.bed files (T_ and N_)"),
   make_option("--hbv_ins_dir", type = "character",
-    default = "/node200data/kachungk/hcc_data/hg38+HBV/HBV/ins/breakpoint/",
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/HBV/ins/breakpoint/"),
     help    = "Directory with *_INS_breakpoint_hm_hbv.bed and *_clipped_breakpoint_hm_hbv.bed"),
   make_option("--sv_file", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.csv.gz"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/sv_tad_ctcf_annotation.csv.gz")),
   make_option("--admr_file", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz")),
   make_option("--phase_vcf_dir", type = "character",
-    default = "/node200data/kachungk/hcc_data/hg38+HBV/clairS/phased_vcf",
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/clairS/phased_vcf"),
     help    = "Directory containing per-patient *.gtf phase-block files"),
   make_option("--patient_map", type = "character",
-    default = "/home/kachungk/patient_code_mapping.csv",
+    default = Sys.getenv("PATIENT_CODE_MAP"),
     help    = "CSV: Samples_ID (e.g. JJT_HCC) → patient_code (e.g. P1)"),
   make_option("--bg_hp_file", type = "character", default = NULL,
     help    = "Optional all_hp_admr_tier.csv.gz from pipeline 04 (non-HBV background)"),
@@ -64,19 +68,18 @@ option_list <- list(
   make_option("--somatic_bp", type = "integer", default = 1000L,
     help    = "T_ BK within somatic_bp of any N_ BK in same patient → germline, excluded"),
   make_option("--outdir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/12.HBV_analysis"),
+    default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/12.HBV_analysis")),
   make_option("--run_id", type = "character", default = "hbv_v1")
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
 OUTDIR   <- opt$outdir
 RUN_ID   <- opt$run_id
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
 COLORS_HBV <- c(HBV_BND = "#E24B4A", non_HBV = "#3B8BD4")
 
-# ── Helper functions ───────────────────────────────────────────────────────────
+# Helper functions =============================================================
 
 patient_map_dt <- fread(opt$patient_map)  # Samples_ID, patient_code
 
@@ -175,7 +178,7 @@ get_sv_hp_beta <- function(admr_gr, sv_block_ids, sv_hp_map) {
 }
 
 
-# ── A. Load + cluster HBV BED files (T_ and N_ from both directories) ─────────
+# A. Load + cluster HBV BED files (T_ and N_ from both directories) ============
 message("Loading HBV BED files...")
 
 raw_chimeric <- load_bed_dir(opt$hbv_chimeric_dir, c("*_chimeric_breakpoint_hm_hbv.bed"))
@@ -197,7 +200,7 @@ cat("\n=== HBV breakpoints (all, pre-somatic-filter) ===\n")
 print(all_bk[, .(n_loci = .N, n_reads = sum(n_reads)), by = .(pcode, is_tumor)][order(pcode)])
 
 
-# ── B. Somatic filter (T_ clusters not within somatic_bp of any N_ cluster) ───
+# B. Somatic filter (T_ clusters not within somatic_bp of any N_ cluster) ======
 somatic_bk <- somatic_filter(all_bk, opt$somatic_bp)
 
 cat(sprintf("\n=== Somatic HBV breakpoints (T_ minus N_ within %d bp) ===\n", opt$somatic_bp))
@@ -205,15 +208,13 @@ print(somatic_bk[, .(n_somatic_loci = .N, n_reads = sum(n_reads)), by = pcode][o
 
 total_somatic <- nrow(somatic_bk)
 if (total_somatic == 0L) {
-  cat(append = TRUE, file = LOG_FILE,
-      text = sprintf("[%s] 12 hbv_analysis: STOPPED — somatic HBV loci = 0\n", Sys.Date()))
   stop("No somatic HBV integration loci found after subtracting germline (N_) sites.")
 }
 
 fwrite(somatic_bk, file.path(OUTDIR, paste0(RUN_ID, "_somatic_hbv_loci.csv")))
 
 
-# ── C. Match somatic HBV BK to SV records ─────────────────────────────────────
+# C. Match somatic HBV BK to SV records ========================================
 message("Reading SV annotation: ", opt$sv_file)
 sv <- fread(opt$sv_file)
 
@@ -229,8 +230,6 @@ message(sprintf("HBV-proximal SVs: %d (±%d bp positional match)", n_hbv_bnd, op
 sv[, sv_tier_clean := TIER_RECODE[stratification]]
 
 if (n_hbv_bnd == 0L) {
-  cat(append = TRUE, file = LOG_FILE,
-      text = sprintf("[%s] 12 hbv_analysis: STOPPED — 0 SVs matched HBV BK\n", Sys.Date()))
   stop("No SVs matched to somatic HBV integration sites. Check --match_bp or SV coordinate columns.")
 }
 
@@ -240,7 +239,7 @@ print(sv[is_hbv_bnd == TRUE, .N, by = .(sample, sv_tier_clean)])
 hbv_bnd_ids <- sv[is_hbv_bnd == TRUE, bp_id]
 
 
-# ── D. Load phase blocks ───────────────────────────────────────────────────────
+# D. Load phase blocks =========================================================
 message("Loading phase blocks from: ", opt$phase_vcf_dir)
 phase_gtfs <- list.files(opt$phase_vcf_dir, pattern = "\\.gtf$", full.names = TRUE)
 if (length(phase_gtfs) == 0L)
@@ -264,7 +263,7 @@ phase_blocks <- lapply(phase_gtfs, function(x) {
 PATIENT_IDS <- sort(unique(sv$sample))
 
 
-# ── E. Load aDMRs + assign block_id via phase block overlap ───────────────────
+# E. Load aDMRs + assign block_id via phase block overlap ======================
 message("Reading aDMR file: ", opt$admr_file)
 admr_raw <- fread(opt$admr_file)
 
@@ -315,7 +314,7 @@ admr_phased <- lapply(PATIENT_IDS, function(pt) {
 }) %>% setNames(PATIENT_IDS)
 
 
-# ── F. HP-specific |Δβ| for HBV-proximal SVs ──────────────────────────────────
+# F. HP-specific |Δβ| for HBV-proximal SVs =====================================
 message("Computing HP-specific |Δβ| for HBV-proximal SVs...")
 
 sv_hbv_gr_list <- sv[is_hbv_bnd == TRUE] %>%
@@ -422,7 +421,7 @@ if (length(hbv_abs_db) > 0L) {
                   length(hbv_abs_db), sum(admr_export$group == "background")))
 }
 
-# ── G. HBV genome integration map ─────────────────────────────────────────────
+# G. HBV genome integration map ================================================
 # Parse hbv_loc: "chrHBV.C2:5036-5037" → genotype=chrHBV.C2, pos=5036
 message("Analyzing HBV genome integration positions...")
 
@@ -439,7 +438,7 @@ fwrite(somatic_bk[!is.na(hbv_pos),
        file.path(OUTDIR, paste0(RUN_ID, "_hbv_genome_positions.csv")))
 
 
-# ── H. SV tier enrichment near HBV BK (Fisher's exact test) ───────────────────
+# H. SV tier enrichment near HBV BK (Fisher's exact test) ======================
 message("Testing SV tier enrichment near HBV breakpoints...")
 
 tier_counts <- sv[!is.na(sv_tier_clean) & sv_tier_clean != "HBV_associated",
@@ -467,7 +466,7 @@ print(tier_counts[order(-pct_hbv)])
 fwrite(tier_counts, file.path(OUTDIR, paste0(RUN_ID, "_tier_enrichment.csv")))
 
 
-# ── I. Distance-decay: dist_to_nearest_HBV_BK vs HP|Δβ| ──────────────────────
+# I. Distance-decay: dist_to_nearest_HBV_BK vs HP|Δβ| ==========================
 message("Computing distance to nearest HBV BK per aDMR...")
 
 hbv_patients <- intersect(unique(somatic_bk$pcode), PATIENT_IDS)
@@ -512,7 +511,7 @@ print(hbv_dist_cor)
 fwrite(hbv_dist_cor, file.path(OUTDIR, paste0(RUN_ID, "_dist_spearman.csv")))
 
 
-# ── Visualizations ─────────────────────────────────────────────────────────────
+# Visualizations ===============================================================
 
 ## Panel A — HBV genome integration map
 genome_dat <- somatic_bk[!is.na(hbv_pos)]
@@ -603,14 +602,5 @@ ggsave(file.path(OUTDIR, paste0(RUN_ID, "_hbv_analysis.png")),
        ),
        width = 14, height = 10, dpi = 150)
 
-
-# ── Log ────────────────────────────────────────────────────────────────────────
-wt_p_log <- if (!is.null(wt_overall)) round(wt_overall$p.value, 4) else NA_real_
-cat(append = TRUE, file = LOG_FILE,
-    text = sprintf(
-      "[%s] 12 hbv_analysis: somatic_loci=%d; hbv_svs=%d; patients_hbv=%d; wilcox_p=%s; spearman_n=%d\n",
-      Sys.Date(), total_somatic, n_hbv_bnd, length(hbv_patients),
-      ifelse(is.na(wt_p_log), "NA", as.character(wt_p_log)),
-      nrow(hbv_dist_cor[!is.na(spearman_r)])))
 
 message("Done — outputs in: ", OUTDIR)

@@ -12,20 +12,25 @@
 #   3. cluster — CCF estimation with co-clustering of SNVs
 #   4. postassign — assign unclustered SVs to nearest cluster
 #
-# Output: /node200data/kachungk/hcc_data/DMR_SVs/result/svclone/<sample>/
-# Final CCF table: /node200data/kachungk/hcc_data/DMR_SVs/result/svclone_ccf_all.csv
+# Output: $HCC_DATA_DIR/DMR_SVs/result/svclone/<sample>/
+# Final CCF table: $HCC_DATA_DIR/DMR_SVs/result/svclone_ccf_all.csv
 #
 # Usage: bash run_svclone_ccf.sh [SAMPLE1 SAMPLE2 ...]
 #        (no args = run all 12 patients)
 set -euo pipefail
 
-# Paths 
-BASE=/node200data/kachungk/hcc_data
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+set -a
+source "$REPO_ROOT/.env"
+set +a
+
+# Paths
+BASE=${HCC_DATA_DIR}
 SV_DIR=${BASE}/severus_minimap2.out_hg38
 PURPLE_DIR=${BASE}/cnv_deepsomatic.out_hg38/purple
 CLAIRS_DIR=${BASE}/clairS_minimap2.out_hg38
 OUT_DIR=${BASE}/DMR_SVs/result/svclone
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="${SCRIPT_DIR}/svclone_config.ini"
 
 mkdir -p "${OUT_DIR}"
@@ -159,7 +164,7 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
-OUT_DIR <- "/node200data/kachungk/hcc_data/DMR_SVs/result/svclone"
+OUT_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/svclone")
 SAMPLES <- c("JJT","KIS","KSJ","LHS","LSS","MSB","NSH","PJS","PSY","WSY","YJS","YMS")
 
 # Read per-SV cluster certainty (postassign output: chr1/pos1/../most_likely_assignment/average_proportion1/2)

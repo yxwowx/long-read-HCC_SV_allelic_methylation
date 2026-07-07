@@ -16,15 +16,20 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 dir.create(OUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 
-REF_ROOT     <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT     <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED   <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 LAD_BED      <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 PC1_BW       <- file.path(REF_ROOT, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
@@ -32,7 +37,7 @@ BULK_DMR_DIR <- file.path(DATA_ROOT, "DMR_minimap2.out_hg38/DSS")
 
 MAIN_CHROMS  <- paste0("chr", c(1:22, "X"))
 
-# ── 1. Load somatic aDMR ──────────────────────────────────────────────────────
+# 1. Load somatic aDMR =========================================================
 cat("[1] Loading somatic aDMR...\n")
 somatic_dt <- fread(file.path(DMR_SVS_ROOT, "01.DMR_recurrence/somatic_admr_per_patient.csv.gz"))
 cat(sprintf("  Loaded %d rows, %d patients\n", nrow(somatic_dt),
@@ -44,7 +49,7 @@ somatic_gr <- makeGRangesFromDataFrame(somatic_dt, keep.extra.columns = TRUE,
 somatic_gr <- somatic_gr[seqnames(somatic_gr) %in% MAIN_CHROMS]
 patients   <- unique(somatic_dt$patient_code)
 
-# ── 2. Compute ov_bulk per patient ────────────────────────────────────────────
+# 2. Compute ov_bulk per patient ===============================================
 cat("[2] Computing ov_bulk (reciprocal ≥30% overlap with bulk tumor-normal DMR)...\n")
 
 bulk_files <- list.files(BULK_DMR_DIR, pattern = "\\.normal_vs_tumor_DMR\\.sorted\\.txt$",
@@ -118,16 +123,16 @@ for (pt in patients) {
 mcols(somatic_gr)$ov_bulk <- ov_bulk_flags
 
 ov_bulk_df <- bind_rows(ov_bulk_report)
-cat("\n[ov_bulk 요약 (환자별)]\n")
+cat("\n[ov_bulk summary (per patient)]\n")
 print(ov_bulk_df)
 n_total     <- sum(ov_bulk_df$n_somatic)
 n_ov        <- sum(ov_bulk_df$n_ov_bulk)
-cat(sprintf("\n전체: ov_bulk=TRUE %d / %d (%.1f%%)\n", n_ov, n_total, n_ov/n_total*100))
+cat(sprintf("\nOverall: ov_bulk=TRUE %d / %d (%.1f%%)\n", n_ov, n_total, n_ov/n_total*100))
 
 fwrite(ov_bulk_df, file.path(OUT_ROOT, "ov_bulk_distribution.csv"))
-cat("  저장: ov_bulk_distribution.csv\n")
+cat("  Saved: ov_bulk_distribution.csv\n")
 
-# ── 3. SegDup, LAD annotation ─────────────────────────────────────────────────
+# 3. SegDup, LAD annotation ====================================================
 cat("[3] Annotating SegDup and LAD overlap...\n")
 
 segdup_gr <- import.bed(SEGDUP_BED) |> keepStandardChromosomes(pruning.mode = "coarse")
@@ -143,7 +148,7 @@ cat(sprintf("  segdup=TRUE: %d (%.1f%%)\n",
 cat(sprintf("  lad=TRUE:    %d (%.1f%%)\n",
             sum(mcols(somatic_gr)$lad), mean(mcols(somatic_gr)$lad)*100))
 
-# ── 4. B-compartment (PC1 < 0) ────────────────────────────────────────────────
+# 4. B-compartment (PC1 < 0) ===================================================
 cat("[4] Computing B-compartment from PC1 BigWig...\n")
 if (file.exists(PC1_BW)) {
   pc1_rle <- import(PC1_BW, as = "RleList")
@@ -164,10 +169,10 @@ if (file.exists(PC1_BW)) {
   mcols(somatic_gr)$b_compartment <- NA
 }
 
-# ── 5. log10(nCG) ─────────────────────────────────────────────────────────────
+# 5. log10(nCG) ================================================================
 mcols(somatic_gr)$log10_nCG <- log10(pmax(mcols(somatic_gr)$nCG, 1))
 
-# ── 6. Cross-patient recurrence ───────────────────────────────────────────────
+# 6. Cross-patient recurrence ==================================================
 cat("[5] Computing cross-patient recurrence (reciprocal ≥30%)...\n")
 
 # Pool all somatic aDMR; cluster overlapping loci across patients
@@ -208,7 +213,7 @@ recur_dist <- table(cut(recur_counts, breaks = c(0,1,2,3,4,5,Inf),
 cat("  Recurrence distribution:\n")
 print(recur_dist)
 
-# ── 7. Export ─────────────────────────────────────────────────────────────────
+# 7. Export ====================================================================
 cat("[6] Exporting annotated somatic aDMR...\n")
 
 out_dt <- as.data.table(somatic_gr) |>
@@ -216,7 +221,7 @@ out_dt <- as.data.table(somatic_gr) |>
 
 out_path <- file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz")
 fwrite(out_dt, out_path)
-cat(sprintf("  저장: %s (%d rows)\n", out_path, nrow(out_dt)))
+cat(sprintf("  Saved: %s (%d rows)\n", out_path, nrow(out_dt)))
 
 cat("\n=== Feature summary ===\n")
 cat(sprintf("  Total somatic aDMR: %d\n", nrow(out_dt)))
@@ -232,7 +237,5 @@ if (!all(is.na(out_dt$b_compartment)))
               mean(out_dt$b_compartment, na.rm=TRUE)*100))
 cat(sprintf("  n_patients≥3:       %d (%.1f%%)\n",
             sum(out_dt$n_patients >= 3), mean(out_dt$n_patients >= 3)*100))
-
-log_decision("00_somatic_admr_annotate: ov_bulk, segdup, lad, b_compartment, n_patients annotated; outputs: somatic_admr_annotated.csv.gz, ov_bulk_distribution.csv")
 
 cat("\n=== Done: 00_somatic_admr_annotate.R ===\n")

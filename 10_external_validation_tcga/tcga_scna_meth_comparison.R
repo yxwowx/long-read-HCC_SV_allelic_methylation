@@ -19,8 +19,15 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-OUTDIR    <- "/node200data/kachungk/hcc_data/DMR_SVs"
+OUTDIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 CACHE_DIR <- file.path(OUTDIR, "tcga_cache")
 METH_RDS  <- file.path(CACHE_DIR, "tcga_lihc_meth450k_se.rds")
 CNV_RDS   <- file.path(CACHE_DIR, "tcga_lihc_cnv_segment.rds")
@@ -29,7 +36,6 @@ SILV_CSV  <- file.path(OUTDIR, "04.final_candidate/silver_tier.csv")
 OUT_CSV   <- file.path(OUTDIR, "result/tcga_scna_vs_meth.csv")
 FIG_PNG   <- file.path(OUTDIR, "figs/png/fig_tcga_scna_meth.png")
 FIG_PDF   <- file.path(OUTDIR, "figs/panels/fig_tcga_scna_meth.pdf")
-DEC_LOG   <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 
 WINDOW_BP <- 50000L   # ±50 kb window for SCNA matching
 MIN_N_PER_GROUP <- 5L # min samples per group for per-locus test
@@ -38,7 +44,7 @@ dir.create(file.path(OUTDIR, "figs/png"),    showWarnings = FALSE, recursive = T
 dir.create(file.path(OUTDIR, "figs/panels"), showWarnings = FALSE, recursive = TRUE)
 dir.create(file.path(OUTDIR, "result"),      showWarnings = FALSE, recursive = TRUE)
 
-# ── Module 1: Load Gold-tier aDMR loci ────────────────────────────────────────
+# Module 1: Load Gold-tier aDMR loci ===========================================
 message("=== Module 1: Gold-tier aDMR loci ===")
 gold_dt <- fread(GOLD_CSV)
 silv_dt <- fread(SILV_CSV)
@@ -75,7 +81,7 @@ loci_gr <- GRanges(
   locus_id = loci_uniq$locus_id
 )
 
-# ── Module 2: Load TCGA-LIHC 450k methylation (cached) ───────────────────────
+# Module 2: Load TCGA-LIHC 450k methylation (cached) ===========================
 message("\n=== Module 2: TCGA-LIHC 450k methylation ===")
 if (!file.exists(METH_RDS)) stop("Methylation SE not found — run fig8_tcga_validation.R first.")
 meth_se <- readRDS(METH_RDS)
@@ -143,7 +149,7 @@ locus_beta <- beta_long[!is.na(beta),
 message(sprintf("  Locus-sample β values: %d", nrow(locus_beta)))
 rm(beta_mat, beta_dt, beta_long); gc()
 
-# ── Module 3: TCGA-LIHC Copy Number Segment ───────────────────────────────────
+# Module 3: TCGA-LIHC Copy Number Segment ======================================
 message("\n=== Module 3: TCGA-LIHC CN segment data ===")
 
 load_cnv <- function() {
@@ -233,7 +239,7 @@ if (is.null(cnv_obj)) {
   }
 }
 
-# ── Module 4: Classify TCGA samples by SCNA at each Gold locus ───────────────
+# Module 4: Classify TCGA samples by SCNA at each Gold locus ===================
 message("\n=== Module 4: SCNA classification per locus ===")
 
 if (USE_CNV) {
@@ -279,7 +285,7 @@ if (USE_CNV) {
   }, by = locus_id]
 }
 
-# ── Module 5: Wilcoxon per locus (SCNA+ vs SCNA-) ────────────────────────────
+# Module 5: Wilcoxon per locus (SCNA+ vs SCNA-) ================================
 message("\n=== Module 5: Per-locus Wilcoxon test ===")
 
 # Add 12-char patient_id to locus_beta for joining with SCNA data
@@ -336,14 +342,14 @@ n_tot  <- sum(!is.na(locus_test_tested$tcga_dir) & !is.na(locus_test_tested$hcc_
 message(sprintf("  Directional concordance (TCGA SCNA vs HCC allelic): %d / %d",
                 n_conc, n_tot))
 
-# ── Save ──────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 full_res <- merge(locus_test, loci_dir[, .(locus_id, hcc_dir, hcc_median_svwt, n_patients)],
                   by = "locus_id", all.x = TRUE)
 full_res[, scna_method := ifelse(USE_CNV, "CNV-based", "meth-quartile")]
 fwrite(full_res, OUT_CSV)
 message(sprintf("\nResults saved: %s", OUT_CSV))
 
-# ── Figures ───────────────────────────────────────────────────────────────────
+# Figures ======================================================================
 theme_hcc <- theme_classic(base_size = 11) +
   theme(
     plot.background  = element_rect(fill = "white", colour = NA),
@@ -449,14 +455,5 @@ if (nrow(locus_test_tested) < 3) {
   ggsave(FIG_PDF, fig_main, width = 14, height = 8)
   message(sprintf("Figure saved: %s", FIG_PNG))
 }
-
-# ── Decision log ──────────────────────────────────────────────────────────────
-cat(sprintf(
-  "[%s] TCGA SCNA-meth: %d Gold+Silver loci; %d tested; FDR<0.05 n=%d; concordance %d/%d; USE_CNV=%s\n",
-  format(Sys.Date()),
-  nrow(loci_uniq), nrow(locus_test_tested),
-  if (nrow(locus_test_tested) > 0) sum(locus_test_tested$wilcox_fdr < 0.05, na.rm=TRUE) else 0L,
-  n_conc, n_tot, USE_CNV
-), file = DEC_LOG, append = TRUE)
 
 message("\nDone.")

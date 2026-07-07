@@ -19,22 +19,29 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(ggplot2)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-FRAG    <- "/node200data/kachungk/hcc_data/DMR_SVs/result/sv_fragility_annotation.csv"
-SEGDUP  <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD     <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-RMSK    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/rmsk.bed"
-PC1_BW  <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI     <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+FRAG    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/sv_fragility_annotation.csv")
+SEGDUP  <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD     <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+RMSK    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/rmsk.bed")
+PC1_BW  <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI     <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 CTRL_MULT <- 5   # controls per case
 
-# ── 1. Load SV breakpoints (cases) ────────────────────────────────────────────
+# 1. Load SV breakpoints (cases) ===============================================
 message("Loading SV breakpoints...")
 sv <- fread(FRAG, data.table = FALSE) |>
   filter(!is.na(seqnames), grepl("^chr[0-9XY]+$", seqnames)) |>
@@ -45,7 +52,7 @@ sv_gr <- GRanges(seqnames = sv$seqnames,
                  ranges   = IRanges(sv$start, sv$start),
                  is_sv    = 1L)
 
-# ── 2. Generate random control regions (same chr distribution) ─────────────────
+# 2. Generate random control regions (same chr distribution) ===================
 message("Generating random controls...")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z"), data.table = FALSE) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
@@ -67,7 +74,7 @@ cat(sprintf("Controls generated: %d\n", length(ctrl_gr)))
 
 all_gr <- c(sv_gr, ctrl_gr)
 
-# ── 3. Annotate with fragility features ───────────────────────────────────────
+# 3. Annotate with fragility features ==========================================
 message("Annotating with fragility features...")
 
 # SegDup
@@ -100,7 +107,7 @@ all_gr$b_compartment <- !is.na(all_gr$pc1) & all_gr$pc1 < 0
 
 cat(sprintf("Annotated %d regions\n", length(all_gr)))
 
-# ── 4. Build data frame for logistic regression ────────────────────────────────
+# 4. Build data frame for logistic regression ==================================
 df <- data.frame(
   is_sv           = all_gr$is_sv,
   segdup          = as.integer(all_gr$segdup),
@@ -117,7 +124,7 @@ df$obs_weight <- ifelse(df$is_sv == 1L, 1, 1 / CTRL_MULT)
 cat(sprintf("Complete cases for regression: %d (SV=%d, ctrl=%d; weighted 1:1 effective ratio)\n",
             nrow(df), sum(df$is_sv), sum(!df$is_sv)))
 
-# ── 5. Univariate ORs ─────────────────────────────────────────────────────────
+# 5. Univariate ORs ============================================================
 uni_features <- c("segdup", "lad", "b_compartment", "repeat_density")
 uni_res <- lapply(uni_features, function(f) {
   m  <- glm(as.formula(paste("is_sv ~", f)), data = df, weights = obs_weight, family = binomial())
@@ -128,7 +135,7 @@ uni_res <- lapply(uni_features, function(f) {
              OR = or, CI_lo = ci[1], CI_hi = ci[2], p = co[2, 4])
 }) |> bind_rows()
 
-# ── 6. Multivariate logistic regression ───────────────────────────────────────
+# 6. Multivariate logistic regression ==========================================
 message("Fitting multivariate logistic regression...")
 
 # Model 1: binary features only (weighted to correct 1:CTRL_MULT sampling)
@@ -172,7 +179,7 @@ message("Wrote: fragility_multivariate_glm.csv")
 cat(sprintf("\nAIC — binary model: %.1f | full model: %.1f\n",
             AIC(m_bin), AIC(m_full)))
 
-# ── 7. Forest plot ─────────────────────────────────────────────────────────────
+# 7. Forest plot ===============================================================
 feature_labels <- c(
   segdup         = "SegDup overlap",
   lad            = "LAD overlap",

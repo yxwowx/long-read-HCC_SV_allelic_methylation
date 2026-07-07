@@ -1,22 +1,22 @@
 # conda env: renv
-# =============================================================================
-# TAD/CTCF mechanistic validation (Analyses A, B, C)
-# =============================================================================
-# 목적: ±50kb window 분석에서 TAD+CTCF disrupting SV가 Non-boundary SV보다
-#   낮은 DMR 농축을 보인 결과를 보완 검증.
+# TAD/CTCF mechanistic validation (Analyses A, B, C) ===========================
+# Purpose: follow-up validation of the ±50kb window finding that TAD+CTCF
+#   disrupting SVs show lower DMR enrichment than Non-boundary SVs.
 #
-#   A. CTCF anchor 정밀 disruption — breakpoint-CTCF 거리(≤2kb/2-10kb/>10kb)별
-#      DMR enrichment 재계산. tier 내 직접 CTCF disrupting SV를 분리하여
-#      "TAD+CTCF disrupting"의 heterogeneity 평가.
+#   A. CTCF anchor precise disruption — recompute DMR enrichment stratified by
+#      breakpoint-CTCF distance bins (≤2kb / 2-10kb / >10kb). Separates SVs
+#      that directly disrupt CTCF within the tier, to assess heterogeneity
+#      within the "TAD+CTCF disrupting" category.
 #
-#   B. TAD-level DMR enrichment — ±50kb 대신 SV가 속한 TAD body 전체 내
-#      DMR 수를 계산. boundary-disrupting SV가 long-range TAD 재편성 효과로
-#      TAD 전체에서 DMR을 보유하는지 검정.
+#   B. TAD-level DMR enrichment — instead of a ±50kb window, counts DMRs
+#      across the entire TAD body containing the SV. Tests whether
+#      boundary-disrupting SVs carry DMRs across the whole TAD, consistent
+#      with a long-range TAD-reorganization association.
 #
-#   C. Distance-to-boundary stratification — SV bp ~ TAD boundary 거리 bin별
-#      DMR enrichment (Spearman trend test). boundary 근접 SV가 더 큰
-#      enrichment를 보이는 monotonic 관계 검정.
-# =============================================================================
+#   C. Distance-to-boundary stratification — DMR enrichment across bins of
+#      SV-breakpoint-to-TAD-boundary distance (Spearman trend test). Tests
+#      whether SVs closer to a boundary show a monotonic trend toward higher
+#      enrichment.
 
 suppressPackageStartupMessages({
   library(optparse)
@@ -32,26 +32,33 @@ suppressPackageStartupMessages({
   library(BiocParallel)
   library(tibble)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+HCC_DATA_DIR <- Sys.getenv("HCC_DATA_DIR")
+REFERENCE_DIR <- Sys.getenv("REFERENCE_DIR")
 
 option_list <- list(
   make_option("--sv_strat_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz",
+              default = file.path(HCC_DATA_DIR, "DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz"),
               metavar = "FILE",
               help = "Pre-stratified SV file with dist_to_TAD/dist_to_CTCF/tad_condition cols"),
   make_option("--dmr_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/consensus_dmrs_per_patient.csv.gz",
+              default = file.path(HCC_DATA_DIR, "DMR_SVs/01.DMR_recurrence/consensus_dmrs_per_patient.csv.gz"),
               metavar = "FILE", help = "DMR CSV(.gz) per patient"),
   make_option("--tad_bed", type = "character",
-              default = "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_tad.bed",
+              default = file.path(REFERENCE_DIR, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_tad.bed"),
               metavar = "FILE", help = "HepG2 Micro-C TAD body BED"),
   make_option("--ctcf_bed", type = "character",
-              default = "/node200data/kachungk/reference/GRCh38/ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz",
+              default = file.path(REFERENCE_DIR, "ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz"),
               metavar = "FILE", help = "ENCODE HepG2 CTCF peak BED"),
   make_option("--outdir", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/tad_ctcf_validation",
+              default = file.path(HCC_DATA_DIR, "DMR_SVs/02.sv_dmr_enrichment/tad_ctcf_validation"),
               metavar = "DIR", help = "Output directory"),
   make_option("--run_id", type = "character", default = "tier_v2",
               metavar = "STR", help = "Run ID prefix"),
@@ -68,7 +75,7 @@ opt <- parse_args(OptionParser(option_list = option_list))
 
 if (!dir.exists(opt$outdir)) dir.create(opt$outdir, recursive = TRUE)
 
-# ── Visualization constants ─────────────────────────────────────────────────
+# Visualization constants ======================================================
 CTCF_DIST_LEVELS <- c("Direct (≤2kb)", "Proximal (2-10kb)",
                       "Distal (10-50kb)", "Far (>50kb)")
 CTCF_DIST_COLORS <- c("Direct (≤2kb)"     = "#C0392B",
@@ -84,7 +91,7 @@ BOUNDARY_DIST_COLORS <- c("In boundary" = "#C0392B",
                           "100-500kb"   = "#3B8BD4",
                           ">500kb"      = "#95A5A6")
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# Helpers ======================================================================
 
 #' Stratify CTCF distance into 4 bins
 classify_ctcf_dist <- function(d) {
@@ -234,7 +241,7 @@ perm_tad <- function(sv_gr, dmr_gr, tad_body_gr,
   as.numeric(unlist(out, use.names = FALSE))
 }
 
-# ── 1. Load data ────────────────────────────────────────────────────────────
+# 1. Load data =================================================================
 message("Reading SV stratification: ", opt$sv_strat_file)
 sv_df_all <- fread(opt$sv_strat_file)
 sv_df_all[, ctcf_dist_class     := classify_ctcf_dist(dist_to_CTCF)]
@@ -279,7 +286,7 @@ message(sprintf("TAD bodies: %d  |  median width: %.1f kb",
                 length(tad_body_gr),
                 median(width(tad_body_gr)) / 1000))
 
-# ── 2. Cross-distribution diagnostics ───────────────────────────────────────
+# 2. Cross-distribution diagnostics ============================================
 cat("\n=== CTCF dist × tier cross-distribution ===\n")
 cross_ctcf <- sv_df_all %>%
   dplyr::count(stratification, ctcf_dist_class) %>%
@@ -294,9 +301,7 @@ cross_bound <- sv_df_all %>%
 print(cross_bound)
 fwrite(cross_bound, file.path(opt$outdir, sprintf("%s_cross_tier_boundary_dist.csv", opt$run_id)))
 
-# =============================================================================
-# Analysis A: CTCF anchor precise disruption
-# =============================================================================
+# Analysis A: CTCF anchor precise disruption ===================================
 cat("\n\n=== Analysis A: CTCF anchor precise disruption ===\n")
 
 A_res <- lapply(PATIENT_IDS, function(pt) {
@@ -394,9 +399,7 @@ if (!opt$no_plot) {
   saveRDS(pA, file.path(opt$outdir, sprintf("%s_A_ctcf_disruption.rds", opt$run_id)))
 }
 
-# =============================================================================
-# Analysis B: TAD-level DMR enrichment
-# =============================================================================
+# Analysis B: TAD-level DMR enrichment =========================================
 cat("\n\n=== Analysis B: TAD-level DMR enrichment ===\n")
 
 B_res <- lapply(PATIENT_IDS, function(pt) {
@@ -490,9 +493,7 @@ if (!opt$no_plot) {
   saveRDS(pB_dens, file.path(opt$outdir, sprintf("%s_B_tad_density.rds", opt$run_id)))
 }
 
-# =============================================================================
-# Analysis C: Distance-to-boundary stratification
-# =============================================================================
+# Analysis C: Distance-to-boundary stratification ==============================
 cat("\n\n=== Analysis C: Distance-to-boundary stratification ===\n")
 
 C_res <- lapply(PATIENT_IDS, function(pt) {
@@ -599,7 +600,7 @@ if (!opt$no_plot) {
          fig_combined, width = 18, height = 5.5, device = "png", dpi = 300)
 }
 
-# ── Summary log ─────────────────────────────────────────────────────────────
+# Summary log ==================================================================
 cat("\n\n=== Analysis A summary (median enrichment_ratio per CTCF dist bin) ===\n")
 print(A_res %>% dplyr::group_by(ctcf_dist_class) %>%
   dplyr::summarise(n_patients = dplyr::n(),

@@ -21,10 +21,15 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 NORMAL_ADMr_DIR <- file.path(DATA_ROOT, "DMR_minimap2.out_hg38/DSS")
@@ -36,12 +41,12 @@ NORMAL_BG_DELTA <- 0.05
 
 cat("=== 00b_tvn_validation.R ===\n")
 
-# ── Load patient code mapping ────────────────────────────────────────────────
+# Load patient code mapping ====================================================
 pmap <- fread(PATIENT_MAP_PATH)
 # columns: Samples_ID (e.g. JJT_HCC), patient_code (e.g. P1)
 cat(sprintf("[1] Patient map: %d entries\n", nrow(pmap)))
 
-# ── Load somatic aDMR (tumor allelic methylation) ────────────────────────────
+# Load somatic aDMR (tumor allelic methylation) ================================
 cat("[2] Loading somatic aDMR (tumor)...\n")
 somatic_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 somatic_dt <- somatic_dt[seqnames %in% MAIN_CHROMS]
@@ -54,7 +59,7 @@ tumor_dt <- somatic_dt[, .(locus_id, seqnames, start, end, patient_code,
                              tissue_type = "Tumor",
                              hp_abs_diff)]
 
-# ── Load normal aDMR files (one per patient) and look up |HP Δβ| at somatic loci
+# Load normal aDMR files; look up |HP Δβ| at somatic loci ======================
 cat("[3] Loading normal aDMR files and matching to somatic loci...\n")
 normal_files <- list.files(NORMAL_ADMr_DIR, pattern = "\\.normal_aDMR\\.sorted\\.txt$",
                             full.names = TRUE)
@@ -84,7 +89,7 @@ normal_dt_all <- rbindlist(Filter(Negate(is.null), normal_list))
 cat(sprintf("  %d normal aDMR loci loaded across %d patients\n",
             nrow(normal_dt_all), uniqueN(normal_dt_all$patient_code)))
 
-# ── For each somatic aDMR locus, find normal |HP Δβ| at the same coordinates ─
+# For each somatic aDMR locus, find normal |HP Δβ| at the same coordinates =====
 # Strategy: per-patient nearest-overlap. If the somatic aDMR locus overlaps a
 # normal aDMR, take its |HP Δβ|. Otherwise assign the background (NORMAL_BG_DELTA).
 cat("[4] Matching normal |HP Δβ| at somatic loci...\n")
@@ -143,7 +148,7 @@ for (pt in patients) {
 
 normal_final_dt <- rbindlist(normal_rows)
 
-# ── Combine tumor and normal ──────────────────────────────────────────────────
+# Combine tumor and normal =====================================================
 cat("[5] Combining tumor and normal rows...\n")
 combined_dt <- rbind(
   tumor_dt[, .(locus_id, patient_code, tissue_type, hp_abs_diff)],
@@ -163,16 +168,9 @@ summ <- combined_dt[, .(median_abs = median(hp_abs_diff, na.rm=TRUE),
 cat("\n=== T-vs-N summary ===\n")
 print(summ)
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 out_path <- file.path(OUT_ROOT, "tvn_hp_delta.csv")
 fwrite(combined_dt, out_path)
 cat(sprintf("\nSaved: tvn_hp_delta.csv (%d rows)\n", nrow(combined_dt)))
-
-# Append to PATHS in shared_theme (note: add PATHS$tvn = ... manually)
-log_decision(sprintf(
-  "00b_tvn_validation: T-vs-N |HP Δβ|; Tumor median=%.3f, Normal median=%.3f (n_loci_per_pt=%d)",
-  summ[tissue_type=="Tumor", median_abs],
-  summ[tissue_type=="Normal", median_abs],
-  nrow(somatic_dt) / length(patients)))
 
 cat("=== Done: 00b_tvn_validation.R ===\n")

@@ -19,21 +19,27 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(rtracklayer)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-SV_FRAG  <- "/node200data/kachungk/hcc_data/DMR_SVs/result/sv_fragility_annotation.csv"
-GOLD_CSV <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-FAI      <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-CACHE    <- "/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+SV_FRAG  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/sv_fragility_annotation.csv")
+GOLD_CSV <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+FAI      <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+CACHE    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/external_validation_cache")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR  <- file.path(OUT_DIR, "figures")
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(FIG_DIR, showWarnings = FALSE)
 
-# ── 1. CFS catalog (hg38) ─────────────────────────────────────────────────────
+# 1. CFS catalog (hg38) ========================================================
 # Curated from:
 #   Le Tallec et al. 2013 Nat Struct Mol Biol (APH-induced, top expressed in HepG2)
 #   Helmrich et al. 2011 Cell (FHIT/WWOX)
@@ -113,7 +119,7 @@ cfs_gr <- GRanges(
 fwrite(cfs_coords, file.path(OUT_DIR, "cfs_hg38_catalog.csv"))
 message(sprintf("CFS catalog saved: %d loci", nrow(cfs_coords)))
 
-# ── 2. Load SV breakpoints ────────────────────────────────────────────────────
+# 2. Load SV breakpoints =======================================================
 message("\nLoading SV breakpoints...")
 sv <- fread(SV_FRAG, data.table = FALSE) |>
   filter(!is.na(seqnames), grepl("^chr[0-9XY]+$", seqnames)) |>
@@ -134,7 +140,7 @@ sv_bound_gr    <- sv_gr[sv_gr$tier_grp != "Non-boundary"]
 cat(sprintf("Non-boundary: %d | Boundary: %d\n",
             length(sv_nonbound_gr), length(sv_bound_gr)))
 
-# ── 3. Load aDMR loci (Gold + Silver) ─────────────────────────────────────────
+# 3. Load aDMR loci (Gold + Silver) ============================================
 message("Loading Gold aDMR loci...")
 gold <- fread(GOLD_CSV, data.table = FALSE)
 
@@ -155,7 +161,7 @@ admr_gr <- admr_gr[grepl("^chr[0-9XY]+$", as.character(seqnames(admr_gr)))]
 gold_gr  <- admr_gr[admr_gr$tier_class == "Gold"]
 cat(sprintf("aDMR: %d Gold loci\n", length(gold_gr)))
 
-# ── 4. Genome background (random regions, chr-matched) ────────────────────────
+# 4. Genome background (random regions, chr-matched) ===========================
 message("Generating random background...")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z"),
                      data.table = FALSE) |>
@@ -188,7 +194,7 @@ n_bg_admr    <- length(gold_gr) * 100L
 bg_admr_gr   <- rand_regions(n_bg_admr, chr_dist = admr_chr_tab,
                               width = 500L)  # ~aDMR width
 
-# ── 5. CFS overlap analysis ───────────────────────────────────────────────────
+# 5. CFS overlap analysis ======================================================
 message("\nComputing CFS overlap...")
 
 fisher_cfs <- function(query_gr, bg_gr, cfs_ref_gr, label) {
@@ -236,7 +242,7 @@ print(results |> select(group, n_query, pct_query_cfs, pct_bg_cfs, OR, p_adj, si
 fwrite(results, file.path(OUT_DIR, "cfs_overlap.csv"))
 message("Saved: cfs_overlap.csv")
 
-# ── 6. Per-CFS locus overlap table ────────────────────────────────────────────
+# 6. Per-CFS locus overlap table ===============================================
 message("\nPer-CFS locus breakdown...")
 
 per_locus <- lapply(seq_len(length(cfs_gr)), function(i) {
@@ -275,7 +281,7 @@ print(per_locus |> arrange(desc(both), desc(n_nb_sv + n_gold_admr)))
 fwrite(per_locus, file.path(OUT_DIR, "cfs_per_locus.csv"))
 message("Saved: cfs_per_locus.csv")
 
-# ── 7. Figure ─────────────────────────────────────────────────────────────────
+# 7. Figure ====================================================================
 message("\nGenerating figures...")
 
 theme_hcc <- theme_classic(base_size = 12) +
@@ -335,7 +341,7 @@ ggsave(file.path(FIG_DIR, "fig_s8b_cfs_heatmap.png"), p_heat,
        width = 8, height = 8, dpi = 150)
 message("Saved: fig_s8a_cfs_forest.png + fig_s8b_cfs_heatmap.png")
 
-# ── 8. Summary ────────────────────────────────────────────────────────────────
+# 8. Summary ===================================================================
 nb_row <- results |> filter(group == "Non-boundary SV")
 gd_row <- results |> filter(group == "Gold aDMR")
 
@@ -344,14 +350,5 @@ cat(sprintf("Non-boundary SV at CFS: OR=%.2f [%.2f–%.2f] %s (p_adj=%.3g)\n",
             nb_row$OR, nb_row$CI_lo, nb_row$CI_hi, nb_row$sig, nb_row$p_adj))
 cat(sprintf("Gold aDMR at CFS:       OR=%.2f [%.2f–%.2f] %s (p_adj=%.3g)\n",
             gd_row$OR, gd_row$CI_lo, gd_row$CI_hi, gd_row$sig, gd_row$p_adj))
-
-cat(
-  sprintf("[%s] P1-C cfs_overlap: Non-boundary SV OR=%.2f %s; Gold aDMR OR=%.2f %s; CFS loci with both=%d/%d\n",
-          Sys.Date(),
-          nb_row$OR, nb_row$sig,
-          gd_row$OR, gd_row$sig,
-          sum(per_locus$both), nrow(per_locus)),
-  file = LOG_FILE, append = TRUE
-)
 
 message("\nDone.")

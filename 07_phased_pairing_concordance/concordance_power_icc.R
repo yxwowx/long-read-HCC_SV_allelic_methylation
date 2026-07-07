@@ -19,9 +19,16 @@ suppressPackageStartupMessages({
   library(lme4)
   library(pwr)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-PAIRS_FILE <- "/node200data/kachungk/hcc_data/SV_aDMR/phaseblock_pairs.csv"
-OUTFILE    <- "/node200data/kachungk/hcc_data/SV_aDMR/result/concordance_power_icc.csv"
+PAIRS_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/phaseblock_pairs.csv")
+OUTFILE    <- file.path(Sys.getenv("HCC_DATA_DIR"), "SV_aDMR/result/concordance_power_icc.csv")
 
 pairs <- fread(PAIRS_FILE)
 pairs[, concordant := as.integer(sv_minus_wt < 0)]

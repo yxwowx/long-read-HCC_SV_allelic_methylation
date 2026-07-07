@@ -18,21 +18,28 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SV_FRAG   <- "/node200data/kachungk/hcc_data/DMR_SVs/result/sv_fragility_annotation.csv"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SV_FRAG   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/sv_fragility_annotation.csv")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 N_PERM <- 1000
 
-# ── 1. Load SVs (non-boundary), aDMRs, SegDup ───────────────────────────────
+# 1. Load SVs (non-boundary), aDMRs, SegDup ====================================
 message("Loading SVs, aDMRs, SegDup...")
 
 sv_frag <- fread(SV_FRAG, data.table=FALSE) |>
@@ -57,7 +64,7 @@ chrom_sizes <- fread(FAI, col.names=c("chr","len","x","y","z"), data.table=FALSE
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |> select(chr, len)
 chrom_len <- setNames(chrom_sizes$len, chrom_sizes$chr)
 
-# ── 2. Observed OR (SV and aDMR vs SegDup) ──────────────────────────────────
+# 2. Observed OR (SV and aDMR vs SegDup) =======================================
 calc_or <- function(query_gr, feature_gr) {
   n_feat   <- sum(overlapsAny(query_gr, feature_gr))
   n_nofeat <- length(query_gr) - n_feat
@@ -80,7 +87,7 @@ obs_admr_or <- calc_or(admr_gr, segdup_gr)
 cat(sprintf("Observed SV OR vs SegDup  : %.3f\n", obs_sv_or))
 cat(sprintf("Observed aDMR OR vs SegDup: %.3f\n", obs_admr_or))
 
-# ── 3. Permutation: shuffle SegDup within chromosomes ───────────────────────
+# 3. Permutation: shuffle SegDup within chromosomes ============================
 message(sprintf("Running %d permutations...", N_PERM))
 
 shuffle_segdup <- function(segdup_gr, chrom_len) {
@@ -129,7 +136,7 @@ cat(sprintf("\nNull aDMR OR : median=%.3f, 95%%ile=%.3f, 99%%ile=%.3f\n",
   median(null_admr_ors), quantile(null_admr_ors,0.95), quantile(null_admr_ors,0.99)))
 cat(sprintf("Observed aDMR OR=%.3f → empirical p=%.4f\n", obs_admr_or, emp_p_admr))
 
-# ── 4. Save results ───────────────────────────────────────────────────────────
+# 4. Save results ==============================================================
 res <- data.frame(
   analysis           = c("SV (C13)", "aDMR (C14)"),
   observed_OR        = c(obs_sv_or,   obs_admr_or),
@@ -154,7 +161,7 @@ null_dist <- data.frame(
 )
 fwrite(null_dist, file.path(OUT_DIR, "a2_segdup_permutation_null_dist.csv"))
 
-# ── 5. Figure ─────────────────────────────────────────────────────────────────
+# 5. Figure ====================================================================
 obs_lines <- data.frame(
   analysis   = c("SV (C13)", "aDMR (C14)"),
   observed   = c(obs_sv_or,   obs_admr_or),

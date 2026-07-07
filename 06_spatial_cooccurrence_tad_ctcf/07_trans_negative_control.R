@@ -1,9 +1,14 @@
 #!/usr/bin/env Rscript
 # P0-1: Trans negative control
-# Tests whether HP|Δβ| decays with distance from SV (cis ≤50kb vs mid 50kb–1Mb vs trans >1Mb)
-# proving that the distance-decay signal is spatial, not just window-based.
+# Tests whether HP|Δβ| decays with distance from SV (cis ≤50kb vs mid 50kb–1Mb vs trans >1Mb),
+# as a check that the distance-decay signal is spatial, not just window-based.
 #
-# Run: mamba run -n renv Rscript pipeline/07_trans_negative_control.R
+# SUPERSEDED — kept for provenance only. Does not match the manuscript-reported
+# trans-negative-control numbers (paired Wilcoxon p=0.098 at 50kb vs 1Mb; one-sample
+# p=1.5e-4 at 1Mb); those come from trans_negative_control.R Part 1. Do not use this
+# script's KS/JT output for reported figures — see trans_negative_control.R instead.
+#
+# Run: mamba run -n renv Rscript 06_spatial_cooccurrence_tad_ctcf/07_trans_negative_control.R
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -13,16 +18,22 @@ suppressPackageStartupMessages({
   library(clinfun)
   library(optparse)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+DMR_SVS_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 
 option_list <- list(
   make_option("--phased_ov", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis/all_hp_admr_tier.csv.gz",
+    default = file.path(DMR_SVS_DIR, "03.haplotype_sv_admr_analysis/all_hp_admr_tier.csv.gz"),
     help = "Phased SV-aDMR overlap file (all_hp_admr_tier.csv.gz)"),
   make_option("--outdir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis",
+    default = file.path(DMR_SVS_DIR, "03.haplotype_sv_admr_analysis"),
     help = "Output directory"),
   make_option("--run_id", type = "character", default = "tier_v2",
     help = "Run identifier prefix for output files"),
@@ -33,14 +44,13 @@ opt <- parse_args(OptionParser(option_list = option_list))
 
 OUTDIR   <- opt$outdir
 RUN_ID   <- opt$run_id
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
 DIST_BREAKS <- c(-Inf, 50e3, 1e6, Inf)
 DIST_LABELS <- c("cis (≤50kb)", "mid (50kb–1Mb)", "trans (>1Mb)")
 DIST_COLORS <- c("cis (≤50kb)" = "#E24B4A", "mid (50kb–1Mb)" = "#BA7517", "trans (>1Mb)" = "#888780")
 
-# ── 1. Load ──────────────────────────────────────────────────────────────────
+# 1. Load ======================================================================
 message("Reading phased overlap: ", opt$phased_ov)
 dat <- fread(opt$phased_ov)
 
@@ -80,7 +90,7 @@ dat <- dat %>%
 message(sprintf("Rows after filter (abs_db >= %.2f): %d", opt$min_abs_db, nrow(dat)))
 print(table(dat$dist_class))
 
-# ── 2. KS tests: cis vs mid, cis vs trans, mid vs trans ──────────────────────
+# 2. KS tests: cis vs mid, cis vs trans, mid vs trans ==========================
 ks_pairs <- list(
   c("cis (≤50kb)", "mid (50kb–1Mb)"),
   c("cis (≤50kb)", "trans (>1Mb)"),
@@ -101,7 +111,7 @@ ks_res <- lapply(ks_pairs, function(pair) {
 cat("\n=== KS test (group1 > group2 in |Δβ|) ===\n")
 print(ks_res)
 
-# ── 3. JT trend test (cis > mid > trans) ─────────────────────────────────────
+# 3. JT trend test (cis > mid > trans) =========================================
 jt_df <- dat %>% filter(!is.na(dist_class))
 jt_order <- as.integer(factor(jt_df$dist_class,
                                 levels = rev(DIST_LABELS)))  # cis=3, mid=2, trans=1 → decreasing
@@ -112,7 +122,7 @@ jt_res <- tryCatch(
 )
 cat(sprintf("\nJT trend (cis>mid>trans in |Δβ|): p = %.4f\n", jt_res$p.value))
 
-# ── 4. Per-patient median summary ────────────────────────────────────────────
+# 4. Per-patient median summary ================================================
 pt_summary <- dat %>%
   group_by(sample, dist_class) %>%
   summarise(
@@ -122,7 +132,7 @@ pt_summary <- dat %>%
     .groups = "drop"
   )
 
-# ── 5. Plots ──────────────────────────────────────────────────────────────────
+# 5. Plots =====================================================================
 p_violin <- ggplot(dat, aes(x = dist_class, y = abs_db, fill = dist_class)) +
   geom_violin(alpha = 0.7, trim = TRUE) +
   geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.8) +
@@ -154,18 +164,10 @@ p_combined <- p_violin | p_pt | p_tier
 ggsave(file.path(OUTDIR, paste0(RUN_ID, "_P01_trans_neg_control.png")),
        p_combined, width = 16, height = 5, dpi = 150)
 
-# ── 6. Save CSVs ──────────────────────────────────────────────────────────────
+# 6. Save CSVs =================================================================
 fwrite(ks_res,     file.path(OUTDIR, paste0(RUN_ID, "_P01_ks_test.csv")))
 fwrite(pt_summary, file.path(OUTDIR, paste0(RUN_ID, "_P01_pt_summary.csv")))
 fwrite(data.frame(JT_p = jt_res$p.value, n_obs = nrow(jt_df)),
        file.path(OUTDIR, paste0(RUN_ID, "_P01_jt_result.csv")))
-
-cat(append = TRUE,
-    text   = sprintf("[%s] P0-1 trans_negative_control: JT p=%.4f; KS cis>trans D=%.3f p=%.4f; n=%d\n",
-                     Sys.Date(), jt_res$p.value,
-                     ks_res$KS_D[ks_res$group2 == "trans (>1Mb)"],
-                     ks_res$p_value[ks_res$group2 == "trans (>1Mb)"],
-                     nrow(dat)),
-    file   = LOG_FILE)
 
 message("Done: P0-1 outputs in ", OUTDIR)

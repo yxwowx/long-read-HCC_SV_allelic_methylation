@@ -5,7 +5,11 @@
 
 set -euo pipefail
 
-OUT_DIR="/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache/repliseq"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$REPO_ROOT/.env"
+
+OUT_DIR="${HCC_DATA_DIR}/DMR_SVs/external_validation_cache/repliseq"
 mkdir -p "${OUT_DIR}"
 
 declare -A FILES=(

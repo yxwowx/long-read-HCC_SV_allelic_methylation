@@ -21,9 +21,16 @@ suppressPackageStartupMessages({
   library(limma)
   library(edgeR)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-OUTDIR    <- "/node200data/kachungk/hcc_data/DMR_SVs"
+# Paths ========================================================================
+OUTDIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 FIGDIR    <- file.path(OUTDIR, "figs")
 PROM_RDS  <- file.path(OUTDIR, "canonical_promoters_hg38.gencode_v49.rds")
 GENE_LIST <- file.path(OUTDIR, "result", "genes_gold_silver_admr.csv")
@@ -32,7 +39,6 @@ SILV_CSV   <- file.path(OUTDIR, "result", "silver_tier.csv")
 GOLD_FINAL <- file.path(OUTDIR, "04.final_candidate", "gold_tier_final.csv")
 SILV_FINAL <- file.path(OUTDIR, "04.final_candidate", "silver_tier.csv")
 CACHE_DIR <- file.path(OUTDIR, "tcga_cache")
-DEC_LOG   <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 
 for (d in c(CACHE_DIR,
             file.path(FIGDIR, "panels"),
@@ -43,7 +49,7 @@ for (d in c(CACHE_DIR,
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
 }
 
-# ── Theme ─────────────────────────────────────────────────────────────────────
+# Theme ========================================================================
 theme_hcc <- theme_classic(base_size = 11) +
   theme(
     plot.background  = element_rect(fill = "white", colour = NA),
@@ -52,14 +58,14 @@ theme_hcc <- theme_classic(base_size = 11) +
     legend.background = element_blank()
   )
 
-# ── Gold gene list (promoter-overlap only) ─────────────────────────────────
+# Gold gene list (promoter-overlap only) =======================================
 gene_dt <- fread(GENE_LIST)
 gold_genes_prom <- unique(gene_dt[source == "promoter", gene_name])
 gold_genes_prom <- gold_genes_prom[!grepl("^ENSG", gold_genes_prom)]  # drop ENSG IDs
 message(sprintf("Gold+Silver promoter genes for validation: %d", length(gold_genes_prom)))
 message("  ", paste(gold_genes_prom, collapse = ", "))
 
-# ── Load our HCC Δβ direction per gene (for concordance panel) ──────────────
+# Load our HCC Δβ direction per gene (for concordance panel) ===================
 load_hcc_direction <- function() {
   gold_df <- if (file.exists(GOLD_FINAL)) fread(GOLD_FINAL) else data.table()
   silv_df <- if (file.exists(SILV_FINAL)) fread(SILV_FINAL) else data.table()
@@ -83,7 +89,7 @@ load_hcc_direction <- function() {
          by = gene_name]
 }
 
-# ── Module 1: Download TCGA-LIHC data (cached) ───────────────────────────────
+# Module 1: Download TCGA-LIHC data (cached) ===================================
 message("\n=== Module 1: Download TCGA-LIHC data ===")
 
 METH_RDS <- file.path(CACHE_DIR, "tcga_lihc_meth450k_se.rds")
@@ -151,7 +157,7 @@ get_clinical <- function() {
 }
 clin <- get_clinical()
 
-# ── Module 2: Methylation processing ─────────────────────────────────────────
+# Module 2: Methylation processing =============================================
 message("\n=== Module 2: Methylation processing ===")
 
 METH_BETA_OUT <- file.path(OUTDIR, "result", "gold_meth_beta.csv.gz")
@@ -245,7 +251,7 @@ if (is.null(gene_beta) || nrow(gene_beta) == 0) {
 message(sprintf("  Genes with ≥1 probe: %d; samples: %d",
                 uniqueN(gene_beta$gene_name), uniqueN(gene_beta$barcode)))
 
-# ── Module 3: Expression processing ──────────────────────────────────────────
+# Module 3: Expression processing ==============================================
 message("\n=== Module 3: Expression processing ===")
 
 EXPR_OUT <- file.path(OUTDIR, "result", "gold_expr_tpm.csv.gz")
@@ -307,7 +313,7 @@ process_expression <- function() {
 
 expr_long <- process_expression()
 
-# ── Module 4: Statistical analyses ────────────────────────────────────────────
+# Module 4: Statistical analyses ===============================================
 message("\n=== Module 4: Statistical analyses ===")
 
 # 4a. Tumor vs Normal Δβ per gene (Wilcoxon)
@@ -438,7 +444,7 @@ if (length(time_col) == 0 || length(status_col) == 0) {
   fwrite(surv_summary, file.path(OUTDIR, "result", "tcga_survival_summary.csv"))
 } # end survival block
 
-# ── Module 5: Figures ─────────────────────────────────────────────────────────
+# Module 5: Figures ============================================================
 message("\n=== Module 5: Figures ===")
 
 save_panel <- function(p, name, w = 7, h = 5) {
@@ -446,7 +452,7 @@ save_panel <- function(p, name, w = 7, h = 5) {
   ggsave(file.path(FIGDIR, "png",    paste0(name, ".png")), p, width = w, height = h, dpi = 150)
 }
 
-# ── Panel A: Tumor vs Normal promoter β ──────────────────────────────────────
+# Panel A: Tumor vs Normal promoter β ==========================================
 panel_A <- function() {
   dat <- gene_beta[sample_type2 %in% c("Tumor", "Normal")]
   dat[, gene_label := gene_name]
@@ -470,7 +476,7 @@ panel_A <- function() {
           axis.text.x = element_text(angle = 30, hjust = 1))
 }
 
-# ── Panel B: Forest plot — Spearman ρ ─────────────────────────────────────────
+# Panel B: Forest plot — Spearman ρ ============================================
 panel_B <- function() {
   dat <- cor_stats[!is.na(spearman_rho)]
   dat <- merge(dat, tn_stats[, .(gene_name, delta_beta, tcga_dir)],
@@ -492,7 +498,7 @@ panel_B <- function() {
     theme(legend.position = "right")
 }
 
-# ── Panel C: KM survival curves (top 3 by logrank p) ─────────────────────────
+# Panel C: KM survival curves (top 3 by logrank p) =============================
 km_ggplot <- function(sv_data, gene, logrank_p) {
   fit <- survfit(Surv(os_days, os_event) ~ meth_group, data = sv_data)
   km_df <- setDT(broom::tidy(fit))
@@ -532,7 +538,7 @@ if (!is.null(surv_res) && length(surv_res) > 0) {
   })
 }
 
-# ── Panel D: Concordance tile — HCC direction vs TCGA Δβ ────────────────────
+# Panel D: Concordance tile — HCC direction vs TCGA Δβ =========================
 panel_D <- function() {
   hcc_dir <- load_hcc_direction()
   if (is.null(hcc_dir) || nrow(hcc_dir) == 0) {
@@ -569,7 +575,7 @@ panel_D <- function() {
   }
 }
 
-# ── Panel E: HCC allelic Δβ at promoter aDMRs vs TCGA Δβ ────────────────────
+# Panel E: HCC allelic Δβ at promoter aDMRs vs TCGA Δβ =========================
 panel_E <- function() {
   gold_df <- if (file.exists(GOLD_FINAL)) fread(GOLD_FINAL) else data.table()
   silv_df <- if (file.exists(SILV_FINAL)) fread(SILV_FINAL) else data.table()
@@ -664,7 +670,7 @@ panel_E <- function() {
           legend.box      = "horizontal")
 }
 
-# ── Assemble figure ───────────────────────────────────────────────────────────
+# Assemble figure ==============================================================
 message("  Assembling panels ...")
 library(patchwork)
 
@@ -724,7 +730,7 @@ ggsave(file.path(FIGDIR, "panels", "fig8_combined.pdf"),
        fig8, width = 18, height = 18)
 message("  Saved: fig8_combined.png/pdf")
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# Summary ======================================================================
 message("\n=== Summary ===")
 message(sprintf("Genes validated      : %d", uniqueN(gene_beta$gene_name)))
 message(sprintf("Tumor samples (meth) : %d",
@@ -738,14 +744,5 @@ n_surv_sig <- if (!is.null(surv_res)) {
   sum(sapply(surv_res, `[[`, "logrank_p") < 0.05)
 } else 0L
 message(sprintf("Genes logrank p<0.05 : %d", n_surv_sig))
-
-# Decision log
-top_gene <- tn_stats[which.max(abs(delta_beta)), gene_name]
-cat(sprintf(
-  "[%s] Fig 8 TCGA-LIHC validation: %d Gold+Silver genes; top Δβ gene=%s (Δβ=%.3f); meth-expr ρ<-0.20 n=%d; logrank p<0.05 n=%d\n",
-  format(Sys.Date()), uniqueN(gene_beta$gene_name), top_gene,
-  tn_stats[gene_name == top_gene, delta_beta],
-  sum(cor_stats$spearman_rho < -0.20, na.rm = TRUE), n_surv_sig
-), file = DEC_LOG, append = TRUE)
 
 message("\nDone.")

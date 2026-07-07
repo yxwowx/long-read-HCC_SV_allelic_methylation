@@ -15,15 +15,20 @@ suppressPackageStartupMessages({
   library(rtracklayer)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 CONF_DMR_PATH <- file.path(DMR_SVS_ROOT, "01.DMR_recurrence/confident_dmr_per_patient.csv.gz")
 
-REF_ROOT   <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT   <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 LAD_BED    <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 PC1_BW     <- file.path(REF_ROOT, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
@@ -33,7 +38,7 @@ N_BOOT     <- 1000L
 MAIN_CHROMS <- paste0("chr", c(1:22, "X"))
 set.seed(42L)
 
-# ── Load reference features ────────────────────────────────────────────────────
+# Load reference features ======================================================
 cat("[0] Loading reference features...\n")
 segdup_gr <- import.bed(SEGDUP_BED) |> keepStandardChromosomes(pruning.mode = "coarse")
 segdup_gr <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
@@ -80,14 +85,14 @@ make_controls <- function(case_gr, n_mult, seed) {
   do.call(c, Filter(Negate(is.null), ctrl_list))
 }
 
-# ── Load somatic aDMR (set A) ─────────────────────────────────────────────────
+# Load somatic aDMR (set A) ====================================================
 cat("[1] Loading somatic aDMR...\n")
 somatic_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 somatic_dt <- somatic_dt[seqnames %in% MAIN_CHROMS]
 somatic_gr <- makeGRangesFromDataFrame(somatic_dt, seqnames.field = "seqnames")
 cat(sprintf("  Somatic aDMR: %d\n", length(somatic_gr)))
 
-# ── Load recurrently remodeled constitutional aDMR (set B) ────────────────────
+# Load recurrently remodeled constitutional aDMR (set B) =======================
 # Source: confident_dmr_per_patient.csv.gz (bulk tumor-normal DMR ∩ tumor aDMR)
 # Coordinates: admr_chr/admr_start/admr_end = tumor aDMR locus
 # Set B (all): ALL confident_dmr-derived tumor aDMR = recurrently remodeled constitutional aDMR
@@ -119,7 +124,7 @@ cat(sprintf("  Recurrently remodeled normal aDMR (ov_norm_admr=TRUE): %d (%.1f%%
             length(normal_admr_gr),
             length(normal_admr_gr) / length(constitutional_gr) * 100))
 
-# ── Annotate and build analysis data frames ────────────────────────────────────
+# Annotate and build analysis data frames ======================================
 cat("[3] Annotating all three sets...\n")
 somatic_gr        <- annotate_gr(somatic_gr)
 constitutional_gr <- annotate_gr(constitutional_gr)
@@ -150,7 +155,7 @@ df_som    <- build_df(somatic_gr,        ctrl_som,    "somatic")
 df_const  <- build_df(constitutional_gr, ctrl_const,  "constitutional")
 df_normal <- build_df(normal_admr_gr,    ctrl_normal, "normal_admr")
 
-# ── Per-set GLM ───────────────────────────────────────────────────────────────
+# Per-set GLM ==================================================================
 cat("[4] Fitting per-set GLMs...\n")
 fit_glm <- function(df) {
   glm(is_case ~ segdup + lad + b_compartment, data = df, family = binomial,
@@ -181,7 +186,7 @@ cat(sprintf("  Recurrently remodeled constitutional SegDup OR=%.3f [%.3f–%.3f]
 cat(sprintf("  Recurrently remodeled normal aDMR   SegDup OR=%.3f [%.3f–%.3f] p=%.2e\n",
             or_normal$OR, or_normal$CI_lo, or_normal$CI_hi, or_normal$p_val))
 
-# ── Multi-feature OR table (SegDup/LAD/B-comp, adjusted + marginal) ──────────
+# Multi-feature OR table (SegDup/LAD/B-comp, adjusted + marginal) ==============
 # Feeds the 3-population x fragility-feature comparison (viz/v1/figS9): the
 # adjusted (mutually-conditioned) GLM above is reused for the "multivariate"
 # framework; a separate one-feature-at-a-time GLM gives the "marginal" (vs
@@ -226,7 +231,7 @@ print(multifeature_rows[, .(population, feature, framework, OR = round(OR,3),
 fwrite(multifeature_rows, file.path(OUT_ROOT, "fragility_or_by_population.csv"))
 cat(sprintf("  Saved: %s\n", file.path(OUT_ROOT, "fragility_or_by_population.csv")))
 
-# ── Stacked GLM: interaction test ─────────────────────────────────────────────
+# Stacked GLM: interaction test ================================================
 cat("[5] Stacked GLM interaction test (segdup × set)...\n")
 df_stacked <- rbind(
   cbind(df_som,   set_indicator = 0L),  # somatic = reference
@@ -248,7 +253,7 @@ cat(sprintf("  Interaction β=%.3f, OR_ratio=%.2f [%.2f–%.2f], p=%.4f\n",
             interact_coef, exp(interact_coef),
             exp(interact_ci[1]), exp(interact_ci[2]), interact_p))
 
-# ── Bootstrap CI on ΔOR ───────────────────────────────────────────────────────
+# Bootstrap CI on delta-OR =====================================================
 cat(sprintf("[6] Bootstrapping ΔOR (%d resamples)...\n", N_BOOT))
 
 boot_delta_or <- replicate(N_BOOT, {
@@ -270,7 +275,7 @@ boot_p        <- 2 * min(mean(boot_delta_or > 0), mean(boot_delta_or < 0))
 cat(sprintf("  ΔOR (somatic−constitutional) = %.3f [%.3f–%.3f] boot_p=%.4f\n",
             delta_or_obs, boot_ci[1], boot_ci[2], boot_p))
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 result_dt <- data.table(
   set            = c("somatic", "constitutional", "normal_admr"),
   label          = c("Somatic aDMR",
@@ -295,10 +300,5 @@ result_dt <- data.table(
 fwrite(result_dt, file.path(OUT_ROOT, "somatic_vs_constitutional_segdup.csv"))
 cat(sprintf("\nSaved: somatic_vs_constitutional_segdup.csv\n"))
 print(result_dt[, .(set, OR_segdup, CI_lo, CI_hi, p_val, n_case)])
-
-log_decision(sprintf(
-  "05_somatic_vs_constitutional: OR_somatic=%.3f, OR_const=%.3f (confident_dmr-derived), OR_normal=%.3f, deltaOR(som-const)=%.3f, interaction_p=%.4e",
-  or_somatic$OR, or_const$OR, or_normal$OR,
-  or_const$OR - or_somatic$OR, interact_p))
 
 cat("=== Done: 05_somatic_vs_constitutional.R ===\n")

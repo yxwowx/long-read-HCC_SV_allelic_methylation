@@ -26,10 +26,15 @@ suppressPackageStartupMessages({
   library(bsseq)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT        <- "/node200data/kachungk/hcc_data"
+DATA_ROOT        <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT     <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT         <- file.path(DATA_ROOT, "SV_aDMR")
 PHASE_VCF_DIR    <- file.path(DATA_ROOT, "hg38+HBV/clairS/phased_vcf")
@@ -49,7 +54,7 @@ HBV_MATCH_BP  <- 500L
 MAIN_CHROMS   <- paste0("chr", c(1:22, "X"))
 N_RESAMPLE    <- 1000L
 
-# ── Helpers (adapted from hbv_allele_anchored.R) ──────────────────────────────
+# Helpers (adapted from hbv_allele_anchored.R) =================================
 infer_sv_hp_map <- function(hp_vec, block_id_vec) {
   ok <- !is.na(block_id_vec)
   hp_vec       <- as.integer(hp_vec[ok])
@@ -91,7 +96,7 @@ get_sv_hp_beta_ext <- function(admr_gr, sv_hp_map) {
   )
 }
 
-# ── Level A: verify existing outputs ──────────────────────────────────────────
+# Level A: verify existing outputs =============================================
 cat("[Level A] Checking existing per-read HBV outputs...\n")
 perread_paths <- list(
   meth   = file.path(DMR_SVS_ROOT, "result/hbv_perread/hbv_perread_meth.tsv.gz"),
@@ -106,11 +111,10 @@ for (nm in names(perread_paths)) {
   }
 }
 
-# ── Load HBV loci and SV table ─────────────────────────────────────────────────
+# Load HBV loci and SV table ===================================================
 cat("\n[Level B] Loading HBV loci...\n")
 if (!file.exists(HBV_LOCI_CSV)) {
   cat("HBV loci file not found — skipping Level B\n")
-  log_decision("06_hbv_allele_specific: Level A checked; Level B skipped (HBV loci file not found)")
   quit(status = 0L)
 }
 
@@ -130,13 +134,12 @@ n_hbv_sv <- sum(sv$is_hbv_bnd, na.rm = TRUE)
 cat(sprintf("  HBV-proximal SVs: %d (±%d bp)\n", n_hbv_sv, HBV_MATCH_BP))
 if (n_hbv_sv == 0L) {
   cat("No HBV-proximal SVs found — skipping Level B\n")
-  log_decision("06_hbv_allele_specific: Level A checked; Level B skipped (0 HBV SVs matched)")
   quit(status = 0L)
 }
 hbv_patients <- unique(sv[is_hbv_bnd == TRUE, sample])
 cat("  HBV patients:", paste(sort(hbv_patients), collapse=", "), "\n")
 
-# ── Load phase blocks ─────────────────────────────────────────────────────────
+# Load phase blocks ============================================================
 cat("[Level B] Loading phase block GTF files...\n")
 pmap <- fread(PATIENT_MAP_PATH)
 gtf_files <- list.files(PHASE_VCF_DIR, pattern = "\\.gtf$", full.names = TRUE)
@@ -158,7 +161,7 @@ pb_gr_list <- split(
   pb_df$patient_code
 )
 
-# ── Load somatic aDMR + match normal_beta from per-patient normal aDMR files ───
+# Load somatic aDMR + match normal_beta from per-patient normal aDMR files =====
 cat("[Level B] Loading somatic aDMR and matching normal_beta...\n")
 somatic_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 somatic_dt <- somatic_dt[seqnames %in% MAIN_CHROMS]
@@ -219,7 +222,7 @@ somatic_gr_list <- lapply(unique(somatic_dt$patient_code), function(pt) {
 })
 names(somatic_gr_list) <- unique(somatic_dt$patient_code)
 
-# ── Assign block_id to somatic aDMR ───────────────────────────────────────────
+# Assign block_id to somatic aDMR ==============================================
 cat("[Level B] Assigning block_id to somatic aDMR...\n")
 admr_phased_list <- lapply(hbv_patients, function(pt) {
   admr_gr <- somatic_gr_list[[pt]]
@@ -233,7 +236,7 @@ admr_phased_list <- lapply(hbv_patients, function(pt) {
   admr_gr[!is.na(mcols(admr_gr)$block_id)]
 }) |> setNames(hbv_patients)
 
-# ── Level B: HBV-proximal pairs ────────────────────────────────────────────────
+# Level B: HBV-proximal pairs ==================================================
 cat("[Level B] Extracting HBV-proximal HP-beta pairs...\n")
 hbv_pairs_list <- lapply(hbv_patients, function(pt) {
   sv_hbv <- sv[sample == pt & is_hbv_bnd == TRUE]
@@ -250,7 +253,6 @@ hbv_pairs_list <- lapply(hbv_patients, function(pt) {
 
 if (length(hbv_pairs_list) == 0) {
   cat("No HBV-proximal aDMR pairs found after block assignment\n")
-  log_decision("06_hbv_allele_specific: Level B — 0 pairs found (block assignment failed)")
   quit(status = 0L)
 }
 hbv_df <- bind_rows(hbv_pairs_list)
@@ -258,7 +260,7 @@ cat(sprintf("  HBV pairs: %d across %d patients\n",
             nrow(hbv_df), uniqueN(hbv_df$patient_id)))
 print(hbv_df |> dplyr::count(patient_id, name = "n_pairs"))
 
-# ── Level B: Non-HBV SV control ───────────────────────────────────────────────
+# Level B: Non-HBV SV control ==================================================
 ctrl_pairs_list <- lapply(hbv_patients, function(pt) {
   sv_ctrl <- sv[sample == pt & (is.na(is_hbv_bnd) | is_hbv_bnd == FALSE) &
                 HP %in% c(1L, 2L) & !is.na(PHASESETID)]
@@ -276,7 +278,7 @@ ctrl_pairs_list <- lapply(hbv_patients, function(pt) {
 ctrl_df <- if (length(ctrl_pairs_list) > 0) bind_rows(ctrl_pairs_list) else data.frame()
 cat(sprintf("  Non-HBV control pairs: %d\n", nrow(ctrl_df)))
 
-# ── Recompute normal_beta from the genome-wide smoothed methylation model ─────
+# Recompute normal_beta from the genome-wide smoothed methylation model ========
 cat(sprintf("[Level B] Loading smoothed BSseq object (%s)...\n", basename(BSOBJ_RDS)))
 bs_smoothed <- readRDS(BSOBJ_RDS)
 
@@ -305,7 +307,7 @@ cat(sprintf("  Smoothed normal_beta: %d/%d HBV pairs, %d/%d control pairs resolv
             sum(!is.na(ctrl_df$normal_beta)), nrow(ctrl_df)))
 rm(bs_smoothed)
 
-# ── Compute deviations from normal ────────────────────────────────────────────
+# Compute deviations from normal ===============================================
 hbv_df <- hbv_df |>
   mutate(
     dev_hbv     = sv_hp_beta  - normal_beta,
@@ -325,7 +327,7 @@ if (nrow(ctrl_df) > 0) {
     )
 }
 
-# ── Statistical tests ─────────────────────────────────────────────────────────
+# Statistical tests ============================================================
 test_results <- list()
 
 # Test 1: |dev_HBV| > |dev_WT|
@@ -389,7 +391,7 @@ if (nrow(ctrl_df) > 0) {
               as.numeric(wt4$statistic), wt4$p.value))
 }
 
-# ── LMM: is_hbv effect adjusting for patient and SV type ──────────────────────
+# LMM: is_hbv effect adjusting for patient and SV type =========================
 cat("[Level B] Fitting LMM for specificity (A-III)...\n")
 if (nrow(ctrl_df) > 0) {
   all_pairs_lmm <- bind_rows(
@@ -428,7 +430,7 @@ if (nrow(ctrl_df) > 0) {
   }
 }
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 fwrite(as.data.table(hbv_df), file.path(OUT_ROOT, "hbv_allele_anchored_pairs.csv"))
 
 tests_dt <- rbindlist(lapply(test_results, as.data.table), fill = TRUE)
@@ -436,10 +438,5 @@ fwrite(tests_dt, file.path(OUT_ROOT, "hbv_allele_anchored_tests.csv"))
 
 cat(sprintf("\nSaved: hbv_allele_anchored_pairs.csv (%d rows)\n", nrow(hbv_df)))
 cat(sprintf("Saved: hbv_allele_anchored_tests.csv, hbv_specificity_lmm.csv\n"))
-
-log_decision(sprintf("06_hbv_allele_specific: Level A verified; Level B: %d pairs, hypo %.1f%%, WSR p=%.4f",
-                     nrow(hbv_df),
-                     test_results[["t2_direction"]]$pct_hypo,
-                     test_results[["t1_abs_dev"]]$p_val))
 
 cat("=== Done: 06_hbv_allele_specific.R ===\n")

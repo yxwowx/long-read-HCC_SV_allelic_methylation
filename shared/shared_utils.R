@@ -1,24 +1,33 @@
-# =============================================================================
-# pipeline/shared_utils.R — shared constants, palettes, and utility functions
-# Source at the top of each pipeline script (after library block):
-#   source(file.path(dirname(normalizePath(
-#     sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-#   )), "shared_utils.R"))
-# =============================================================================
+# shared/shared_utils.R ========================================================
+# Shared constants, palettes, and utility functions.
+# Source at the top of each pipeline script (after the library block), finding
+# this repo's shared/ directory regardless of the calling script's own depth:
+#   REPO_ROOT <- local({
+#     d <- dirname(normalizePath(sub("--file=", "",
+#       grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+#     while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+#     d
+#   })
+#   source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-PATIENT_MAP_PATH <- "/home/kachungk/patient_code_mapping.csv"
-BLACKLIST_PATH   <- "/node200data/kachungk/reference/GRCh38/ensembl/ENCFF356LFX_ENCODE-blacklist.bed.gz" # nolint
-DECISION_LOG     <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+# Paths ========================================================================
+# Locate this file's own path (works when source()'d, independent of caller)
+# and load repo-root .env so all path variables below come from it.
+.this_file <- tryCatch(normalizePath(sys.frame(1)$ofile), error = function(e) NA_character_)
+.repo_root <- if (!is.na(.this_file)) dirname(dirname(.this_file)) else normalizePath(".")
+dotenv::load_dot_env(file.path(.repo_root, ".env"))
 
-# ── CNV quality thresholds ────────────────────────────────────────────────────
+PATIENT_MAP_PATH <- Sys.getenv("PATIENT_CODE_MAP")
+BLACKLIST_PATH   <- file.path(Sys.getenv("REFERENCE_DIR"), "ensembl/ENCFF356LFX_ENCODE-blacklist.bed.gz")
+
+# CNV quality thresholds =======================================================
 CN_NORMAL_RANGE     <- c(1.7, 2.3)
 MIN_DEPTH_WINDOW    <- 5L
 MIN_BAF_COUNT       <- 5L
 MIN_SVLEN_FOR_CN    <- 1000L
 VAF_CONCORDANCE_THR <- 0.3
 
-# ── GRCh38 chromosome lengths ─────────────────────────────────────────────────
+# GRCh38 chromosome lengths ====================================================
 CHROM_LENS <- c(
   chr1 = 248956422L, chr2 = 242193529L, chr3 = 198295559L, chr4 = 190214555L,
   chr5 = 181538259L, chr6 = 170805979L, chr7 = 159345973L, chr8 = 145138636L,
@@ -28,7 +37,7 @@ CHROM_LENS <- c(
   chr21 = 46709983L,  chr22 = 50818468L,  chrX = 156040895L
 )
 
-# ── Common ggplot2 theme ──────────────────────────────────────────────────────
+# Common ggplot2 theme =========================================================
 theme_hcc <- ggplot2::theme_classic(base_size = 12) +
   ggplot2::theme(
     plot.title         = ggplot2::element_text(face = "bold", size = 13),
@@ -43,7 +52,7 @@ theme_hcc <- ggplot2::theme_classic(base_size = 12) +
     panel.grid.major.y = ggplot2::element_line(color = "grey92", linewidth = 0.3)
   )
 
-# ── Color palettes ─────────────────────────────────────────────────────────────
+# Color palettes ===============================================================
 
 # SV CNV class (matches $cnv_class column values: copy_neutral/gaining/losing/insertion/COM)
 SV_COLORS <- c(
@@ -97,7 +106,7 @@ TIER_RECODE <- c(
 HP_COLORS   <- c(HP1 = "#3B8BD4", HP2 = "#E24B4A")
 METH_COLORS <- c(HYPER = "#C0392B", HYPO = "#2980B9")
 
-# ── Utility functions ─────────────────────────────────────────────────────────
+# Utility functions ============================================================
 
 anonym_sample <- function(df, sample_col = "sample") {
   if (!exists("patient_code_rule", envir = .GlobalEnv)) {
@@ -144,9 +153,4 @@ safe_fread <- function(path, ...) {
     return(NULL)
   }
   data.table::fread(path, ...)
-}
-
-log_decision <- function(msg) {
-  cat(sprintf("[%s] %s\n", format(Sys.time(), "%Y-%m-%d"), msg),
-      file = DECISION_LOG, append = TRUE)
 }

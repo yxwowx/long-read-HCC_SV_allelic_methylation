@@ -21,19 +21,26 @@ suppressPackageStartupMessages({
   library(matrixStats)
 })
 
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
 set.seed(42)
 
-METH_RDS <- "/node200data/kachungk/hcc_data/DMR_SVs/tcga_cache/tcga_lihc_meth450k_se.rds"
-CNV_RDS  <- "/node200data/kachungk/hcc_data/DMR_SVs/tcga_cache/tcga_lihc_cnv_segment.rds"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+METH_RDS <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/tcga_cache/tcga_lihc_meth450k_se.rds")
+CNV_RDS  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/tcga_cache/tcga_lihc_cnv_segment.rds")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 dir.create(OUT_DIR, showWarnings = FALSE)
 
 GAIN_THRESH  <- 0.3    # log2(CN/2) > 0.3 ≈ CN ≥ 2.46 (gain)
 PROX_WIN     <- 5e5L   # 500 kb window around breakpoints
 MISS_THRESH  <- 0.2    # max probe missingness
 
-# ── Section 1: Power calculation ──────────────────────────────────────────────
+# Section 1: Power calculation =================================================
 message("=== Section 1: Power calculation ===")
 
 our_cohort <- data.frame(
@@ -64,7 +71,7 @@ print(power_res)
 fwrite(power_res, file.path(OUT_DIR, "a_dup1_power_calc.csv"))
 message("Saved: a_dup1_power_calc.csv")
 
-# ── Section 2: TCGA paired CN-gain breakpoint proximity test ──────────────────
+# Section 2: TCGA paired CN-gain breakpoint proximity test =====================
 message("\n=== Section 2: TCGA CN-gain breakpoint methylation test ===")
 
 # 2a. Load methylation
@@ -260,7 +267,7 @@ cat("\n=== Distance-bin Δβ summary ===\n")
 print(bin_summary)
 fwrite(bin_summary, file.path(OUT_DIR, "a_dup1_tcga_bin_summary.csv"))
 
-# ── Section 3: Figures ────────────────────────────────────────────────────────
+# Section 3: Figures ===========================================================
 message("\nGenerating figures...")
 theme_hcc <- theme_classic(base_size = 12) +
   theme(strip.background = element_rect(fill = "grey95", color = NA))
@@ -343,7 +350,7 @@ pc <- ggplot(rho_dt, aes(x = rho)) +
   theme_hcc
 
 # Save panels
-FIG_DIR <- "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2"
+FIG_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/figs/v2")
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
 
 ggsave(file.path(FIG_DIR, "fig_a_dup1_power.png"),     pa, width = 8, height = 5, dpi = 150)
@@ -351,7 +358,7 @@ ggsave(file.path(FIG_DIR, "fig_a_dup1_tcga_bin.png"),  pb, width = 7, height = 5
 ggsave(file.path(FIG_DIR, "fig_a_dup1_tcga_rho.png"),  pc, width = 7, height = 5, dpi = 150)
 message("Saved: fig_a_dup1_*.png")
 
-# ── Final summary ─────────────────────────────────────────────────────────────
+# Final summary ================================================================
 cat("\n=== A_DUP1 FINAL SUMMARY ===\n")
 dup_pow <- power_res[power_res$svtype == "DUP", ]
 inv_pow <- power_res[power_res$svtype == "INV", ]
@@ -365,18 +372,5 @@ cat(sprintf("TCGA pooled ρ=%.4f, p=%.4g (%s)\n",
 cat(sprintf("TCGA sign test: %d/%d ρ<0, p=%.4f (%s)\n",
             n_neg, n_tot, sign_binom$p.value,
             sig_label(sign_binom$p.value)))
-
-# ── Log ───────────────────────────────────────────────────────────────────────
-cat(
-  sprintf(
-    "[%s] A_DUP1: DUP power=%.1f%%(n=%d,need%d); INV power=%.1f%%(n=%d,need%d); TCGA_pooled_rho=%.4f_p=%.4g(%s); sign_test_%d/%d_p=%.3f\n",
-    Sys.Date(),
-    dup_pow$power_obs * 100, dup_pow$n_pairs, dup_pow$n_for_80,
-    inv_pow$power_obs * 100, inv_pow$n_pairs, inv_pow$n_for_80,
-    pooled_rho$estimate, pooled_rho$p.value, sig_label(pooled_rho$p.value),
-    n_neg, n_tot, sign_binom$p.value
-  ),
-  file = LOG_FILE, append = TRUE
-)
 
 message("\nA_DUP1 done.")

@@ -18,14 +18,19 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_DIR      <- file.path(DATA_ROOT, "DMR_minimap2.out_hg38/DSS")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 
-REF_ROOT   <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT   <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 LAD_BED    <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 PC1_BW     <- file.path(REF_ROOT, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
@@ -47,7 +52,7 @@ CHROM_LENS <- setNames(
 pmap <- fread(PATIENT_MAP_PATH)
 patients <- unique(pmap$patient_code)
 
-# ── Reference features ────────────────────────────────────────────────────────
+# Reference features ===========================================================
 cat("[0] Loading reference features...\n")
 segdup_gr <- import.bed(SEGDUP_BED) |> keepStandardChromosomes(pruning.mode = "coarse")
 segdup_gr <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
@@ -131,7 +136,7 @@ load_admr <- function(files) {
   gr[seqnames(gr) %in% MAIN_CHROMS]
 }
 
-# ── Per-patient data collection ───────────────────────────────────────────────
+# Per-patient data collection ==================================================
 cat("[1] Loading per-patient tumor/normal aDMR...\n")
 tumor_files  <- list.files(DMR_DIR, pattern = "\\.tumor_aDMR\\.sorted\\.txt$",  full.names = TRUE)
 normal_files <- list.files(DMR_DIR, pattern = "\\.normal_aDMR\\.sorted\\.txt$", full.names = TRUE)
@@ -192,7 +197,7 @@ cat(sprintf("\n[Priority 2] Normal aDMR stats saved: %d patients\n", nrow(stats_
 print(stats_dt[, .(patient_code, n_tumor_admr, n_normal_admr,
                    n_const_thr10, n_somatic_thr10)])
 
-# ── GLM per threshold ──────────────────────────────────────────────────────────
+# GLM per threshold ============================================================
 cat("\n[2] Running GLM for each threshold...\n")
 or_results <- list()
 
@@ -217,10 +222,4 @@ fwrite(or_dt, file.path(OUT_ROOT, "const_amr_threshold_or.csv"))
 cat("\n[Priority 1] Threshold sensitivity results:\n")
 print(or_dt[, .(threshold_label, n_somatic, OR, CI_lo, CI_hi, p_val, sig)])
 
-log_decision(sprintf(
-  "const_amr_threshold_sensitivity: C14 OR at 5%%=%.3f, 10%%=%.3f, 25%%=%.3f, 50%%=%.3f; all %s",
-  or_dt[threshold == 0.05, OR], or_dt[threshold == 0.10, OR],
-  or_dt[threshold == 0.25, OR], or_dt[threshold == 0.50, OR],
-  if (all(or_dt$p_val > 0.05)) "ns" else "some significant"
-))
 cat("Done.\n")

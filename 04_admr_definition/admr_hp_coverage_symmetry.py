@@ -20,29 +20,31 @@ import sys
 import csv
 import gzip
 import random
-import datetime
 import numpy as np
 import pandas as pd
 from multiprocessing import Pool
+from pathlib import Path
 from scipy import stats
 
 import pysam
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-HAP_DIR     = "/node200data/kachungk/hcc_data/DMR_minimap2.out_hg38/cpg_sites"
-MAPPING_CSV = os.path.expanduser("~/patient_code_mapping.csv")
-GOLD_CSV    = "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILVER_CSV  = "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SEGDUP_BED  = "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-FAI         = "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR     = "/node200data/kachungk/hcc_data/DMR_SVs/result"
-FIG_DIR     = "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2"
-LOG_FILE    = "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared.paths import HCC_DATA_DIR, REFERENCE_DIR, PATIENT_CODE_MAP  # noqa: E402
+
+# Paths ==========
+HAP_DIR     = str(HCC_DATA_DIR / "DMR_minimap2.out_hg38/cpg_sites")
+MAPPING_CSV = str(PATIENT_CODE_MAP)
+GOLD_CSV    = str(HCC_DATA_DIR / "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILVER_CSV  = str(HCC_DATA_DIR / "DMR_SVs/04.final_candidate/silver_tier.csv")
+SEGDUP_BED  = str(REFERENCE_DIR / "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+FAI         = str(REFERENCE_DIR / "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR     = str(HCC_DATA_DIR / "DMR_SVs/result")
+FIG_DIR     = str(HCC_DATA_DIR / "DMR_SVs/figs/v2")
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(FIG_DIR, exist_ok=True)
 
-# ── Parameters ────────────────────────────────────────────────────────────────
+# Parameters ==========
 MIN_COV      = 5    # min per-CpG coverage per haplotype (matches A-II)
 MIN_CPG      = 3    # min CpGs passing filter per locus
 N_RANDOM     = 500  # matched random autosomal intervals per patient
@@ -149,16 +151,16 @@ def process_patient(args):
 
 
 def main():
-    # ── Load patient mapping ──────────────────────────────────────────────────
+    # Load patient mapping ==========
     pmap = pd.read_csv(MAPPING_CSV)
     code2name = dict(zip(pmap["patient_code"], pmap["Samples_ID"]))
     print(f"Patients: {len(code2name)}")
 
-    # ── Load SegDup ───────────────────────────────────────────────────────────
+    # Load SegDup ==========
     print("Loading SegDup …")
     segdup = load_segdup(SEGDUP_BED)
 
-    # ── Load Gold+Silver aDMR loci ────────────────────────────────────────────
+    # Load Gold+Silver aDMR loci ==========
     print("Loading aDMR loci …")
     gold   = pd.read_csv(GOLD_CSV)
     silver = pd.read_csv(SILVER_CSV)
@@ -187,7 +189,7 @@ def main():
     ]
     print(f"Total aDMR intervals to query: {len(all_loci)}")
 
-    # ── Run per patient ───────────────────────────────────────────────────────
+    # Run per patient ==========
     tasks = [
         (code, code2name[code], all_loci, segdup, "tumor")
         for code in sorted(code2name.keys())
@@ -205,7 +207,7 @@ def main():
 
     df = pd.DataFrame(all_rows)
 
-    # ── Statistical comparisons ───────────────────────────────────────────────
+    # Statistical comparisons ==========
     print("\n=== HP Coverage Symmetry ===")
 
     # 1. Overall summary
@@ -237,7 +239,7 @@ def main():
     else:
         ttest_p = np.nan
 
-    # ── Summary CSV ──────────────────────────────────────────────────────────
+    # Summary CSV ==========
     summary_rows = []
     for is_sd in [True, False]:
         sub = df[df["is_segdup"] == is_sd]
@@ -259,7 +261,7 @@ def main():
     print("\nSummary:")
     print(summary_df.to_string(index=False))
 
-    # ── Figures ──────────────────────────────────────────────────────────────
+    # Figures ==========
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -307,7 +309,7 @@ def main():
     except Exception as e:
         print(f"Figure generation failed: {e}")
 
-    # ── Save CSVs ─────────────────────────────────────────────────────────────
+    # Save CSVs ==========
     per_locus_path = os.path.join(OUT_DIR, "admr_hp_coverage_symmetry.csv")
     df.to_csv(per_locus_path, index=False)
 
@@ -316,20 +318,6 @@ def main():
 
     print(f"\nSaved: {per_locus_path}")
     print(f"Saved: {summary_path}")
-
-    # ── Decision log ─────────────────────────────────────────────────────────
-    seg_med = summary_df.loc[summary_df["group"] == "SegDup",
-                             "median_cov_ratio"].values
-    nseg_med = summary_df.loc[summary_df["group"] == "non-SegDup",
-                              "median_cov_ratio"].values
-    seg_med  = float(seg_med[0])  if len(seg_med)  else float("nan")
-    nseg_med = float(nseg_med[0]) if len(nseg_med) else float("nan")
-    with open(LOG_FILE, "a") as flog:
-        flog.write(
-            f"{datetime.date.today()} admr_hp_coverage_symmetry.py: "
-            f"SegDup median cov_ratio={seg_med:.3f} vs non-SegDup={nseg_med:.3f} "
-            f"MWU p={wilcox_ratio_p:.3g} → HP coverage-asymmetry confounder check complete\n"
-        )
 
 
 if __name__ == "__main__":

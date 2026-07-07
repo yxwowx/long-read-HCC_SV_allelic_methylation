@@ -18,19 +18,25 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(optparse)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+DMR_SVS_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 
 option_list <- list(
   make_option("--phased_ov", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis/all_hp_admr_tier.csv.gz"),
+    default = file.path(DMR_SVS_DIR, "03.haplotype_sv_admr_analysis/all_hp_admr_tier.csv.gz")),
   make_option("--insulation", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/tad_ctcf_validation/insulation_8kb.tsv.gz"),
+    default = file.path(DMR_SVS_DIR, "02.sv_dmr_enrichment/tad_ctcf_validation/insulation_8kb.tsv.gz")),
   make_option("--sv_file", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz"),
+    default = file.path(DMR_SVS_DIR, "sv_tad_ctcf_annotation.v2.csv.gz")),
   make_option("--outdir", type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis"),
+    default = file.path(DMR_SVS_DIR, "03.haplotype_sv_admr_analysis")),
   make_option("--run_id", type = "character", default = "tier_v2"),
   make_option("--ins_window", type = "integer", default = 240000L,
     help = "Insulation window to use (80000/240000/480000, default 240000)"),
@@ -40,7 +46,6 @@ opt <- parse_args(OptionParser(option_list = option_list))
 
 OUTDIR   <- opt$outdir
 RUN_ID   <- opt$run_id
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 
 INS_COL <- paste0("log2_insulation_score_", opt$ins_window)
@@ -50,7 +55,7 @@ find_col <- function(df, cands, req = TRUE) {
   if (req) stop("None of [", paste(cands, collapse=","), "] found"); NULL
 }
 
-# ── 1. Load insulation scores ─────────────────────────────────────────────────
+# 1. Load insulation scores ====================================================
 message("Reading insulation: ", opt$insulation)
 ins <- fread(opt$insulation)
 if (!INS_COL %in% names(ins))
@@ -61,7 +66,7 @@ ins_gr <- GRanges(seqnames = ins$chrom,
                   log2_ins = ins[[INS_COL]])
 ins_gr <- ins_gr[!is.nan(ins_gr$log2_ins) & !is.na(ins_gr$log2_ins)]
 
-# ── 2. Load SV annotations ────────────────────────────────────────────────────
+# 2. Load SV annotations =======================================================
 message("Reading SV file: ", opt$sv_file)
 sv <- fread(opt$sv_file)
 
@@ -92,7 +97,7 @@ sv_ann <- as.data.frame(sv_gr) %>%
 
 message(sprintf("SVs with insulation score: %d / %d", nrow(sv_ann), length(sv_gr)))
 
-# ── 3. Load phased overlap ────────────────────────────────────────────────────
+# 3. Load phased overlap =======================================================
 message("Reading phased overlap: ", opt$phased_ov)
 dat <- fread(opt$phased_ov)
 
@@ -117,7 +122,7 @@ dat <- dat %>%
 
 message(sprintf("Analysis rows after join: %d", nrow(dat)))
 
-# ── 4. LME models ─────────────────────────────────────────────────────────────
+# 4. LME models ================================================================
 # Model A: continuous insulation + arch + distance
 # Model B: categorical tier + distance (existing Layer 4 equivalent)
 # Model C: insulation + tier + distance (full)
@@ -173,7 +178,7 @@ best_mod  <- model_list[[best_name]]
 cat(sprintf("\n=== Best model: %s (AIC=%.1f) ===\n", best_name, aic_df$AIC[1]))
 if (!is.null(best_mod)) print(summary(best_mod)$coefficients)
 
-# ── 5. Insulation scatter per tier ────────────────────────────────────────────
+# 5. Insulation scatter per tier ===============================================
 ins_summary <- dat %>%
   dplyr::group_by(sv_tier, sv_arch) %>%
   dplyr::summarise(
@@ -186,7 +191,7 @@ ins_summary <- dat %>%
 cat("\n=== Insulation × |Δβ| correlation per tier ===\n")
 print(ins_summary)
 
-# ── 6. Plots ──────────────────────────────────────────────────────────────────
+# 6. Plots =====================================================================
 p_scatter <- ggplot(dat %>% dplyr::sample_n(min(5000, nrow(.))),
                     aes(x = log2_ins, y = abs_db, color = sv_arch)) +
   geom_point(alpha = 0.3, size = 0.8) +
@@ -223,19 +228,8 @@ p_combined <- (p_scatter | p_aic) / p_tier_scatter +
 ggsave(file.path(OUTDIR, paste0(RUN_ID, "_P27_insulation_lme.png")),
        p_combined, width = 14, height = 10, dpi = 150)
 
-# ── 7. Save ───────────────────────────────────────────────────────────────────
+# 7. Save ======================================================================
 fwrite(aic_df,       file.path(OUTDIR, paste0(RUN_ID, "_P27_lme_aic.csv")))
 fwrite(ins_summary,  file.path(OUTDIR, paste0(RUN_ID, "_P27_ins_tier_cor.csv")))
-
-lrt_p_ins  <- if (!is.null(lrt_ins))  lrt_ins$`Pr(>Chisq)`[2]  else NA
-lrt_p_tier <- if (!is.null(lrt_tier)) lrt_tier$`Pr(>Chisq)`[2] else NA
-
-cat(append = TRUE,
-    text   = sprintf("[%s] P2-7 insulation_lme: best_model=%s (ΔAIC_vs_null=%.2f); LRT_ins_p=%.4f; LRT_tier_p=%.4f\n",
-                     Sys.Date(), best_name,
-                     aic_df$ΔAIC[aic_df$model == "null"],
-                     ifelse(is.na(lrt_p_ins), NA, lrt_p_ins),
-                     ifelse(is.na(lrt_p_tier), NA, lrt_p_tier)),
-    file   = LOG_FILE)
 
 message("Done: P2-7 outputs in ", OUTDIR)

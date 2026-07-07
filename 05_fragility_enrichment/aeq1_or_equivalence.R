@@ -26,19 +26,26 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-SV_FRAG   <- "/node200data/kachungk/hcc_data/DMR_SVs/result/sv_fragility_annotation.csv"
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-RMSK      <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/rmsk.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+SV_FRAG   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/sv_fragility_annotation.csv")
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+RMSK      <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/rmsk.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
@@ -51,7 +58,7 @@ WINDOW_BP <- 5000L     # repeat-density window radius (matches fragility_multiva
 # [1/1.5, 1.5] as practically equivalent (a defensible "small effect" bound).
 DELTA <- log(1.5)  # ≈ 0.405
 
-# ── Helper: extract OR + SE from GLM ──────────────────────────────────────────
+# Helper: extract OR + SE from GLM =============================================
 extract_or_se <- function(model, term = "segdup") {
   co <- summary(model)$coefficients
   ci <- confint.default(model)
@@ -65,7 +72,7 @@ extract_or_se <- function(model, term = "segdup") {
   )
 }
 
-# ── 0. Load shared reference files ────────────────────────────────────────────
+# 0. Load shared reference files ===============================================
 message("Loading reference annotation files …")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z")) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
@@ -91,7 +98,7 @@ annotate_gr <- function(gr) {
   gr
 }
 
-# ── 1. SV dataset ──────────────────────────────────────────────────────────────
+# 1. SV dataset ================================================================
 message("Building SV case–control dataset …")
 sv_raw <- fread(SV_FRAG) |>
   filter(!is.na(seqnames), grepl("^chr[0-9XY]+$", seqnames)) |>
@@ -135,7 +142,7 @@ sv_df$obs_weight <- ifelse(sv_df$is_event == 1L, 1, 1 / SV_CTRL_MULT)
 message(sprintf("  SV df: %d rows (case=%d, ctrl=%d)",
                 nrow(sv_df), sum(sv_df$is_event), sum(!sv_df$is_event)))
 
-# ── 2. aDMR dataset ────────────────────────────────────────────────────────────
+# 2. aDMR dataset ==============================================================
 message("Building aDMR case–control dataset …")
 admr_cols <- c("tier_class","admr_chr","admr_start","admr_end","nCG")
 admr_raw  <- bind_rows(
@@ -197,7 +204,7 @@ admr_df$obs_weight <- ifelse(admr_df$is_event == 1L, 1, 1 / ADM_CTRL_MULT)
 message(sprintf("  aDMR df: %d rows (case=%d, ctrl=%d)",
                 nrow(admr_df), sum(admr_df$is_event), sum(!admr_df$is_event)))
 
-# ── 3. Fit models at each level ────────────────────────────────────────────────
+# 3. Fit models at each level ==================================================
 message("Fitting parallel GLMs …")
 
 fit_model <- function(df, formula_str, label) {
@@ -229,7 +236,7 @@ adm_L3  <- fit_model(admr_df |> filter(!is.na(log10_cpg)),
                      "is_event ~ segdup + lad + b_compartment + repeat_density + log10_cpg",
                      "aDMR — L3 +repeat+CpG")
 
-# ── 4. Wald equivalence tests ─────────────────────────────────────────────────
+# 4. Wald equivalence tests ====================================================
 message("\nRunning Wald equivalence tests …")
 
 wald_test <- function(sv_res, adm_res, level_label) {
@@ -288,7 +295,7 @@ print(eq_tests |>
   select(level, sv_OR, admr_OR, beta_diff, z_equiv, p_equiv, verdict,
          tost_p, tost_verdict))
 
-# ── 5. Summary OR table ───────────────────────────────────────────────────────
+# 5. Summary OR table ==========================================================
 cat("\n=== Full OR table ===\n")
 all_results <- bind_rows(
   lapply(list(sv_L1, adm_L1, sv_L2, adm_L2, sv_L3, adm_L3), function(r) {
@@ -308,12 +315,12 @@ print(all_results |> mutate(across(c(OR,CI_lo,CI_hi), ~round(.,3)),
                              p = signif(p,3)) |>
   select(label, OR, CI_lo, CI_hi, p, sig))
 
-# ── 6. Save ───────────────────────────────────────────────────────────────────
+# 6. Save ======================================================================
 fwrite(eq_tests,    file.path(OUT_DIR, "a_eq1_wald_tests.csv"))
 fwrite(all_results, file.path(OUT_DIR, "a_eq1_or_table.csv"))
 message("Wrote: a_eq1_wald_tests.csv, a_eq1_or_table.csv")
 
-# ── 7. Figure: forest + equivalence summary ───────────────────────────────────
+# 7. Figure: forest + equivalence summary ======================================
 level_order <- c("L1: +lad+b_comp", "L2: +lad+b_comp+repeat", "L3: +lad+b_comp+repeat+CpG")
 
 plot_df2 <- rbind(

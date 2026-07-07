@@ -1,7 +1,5 @@
 # conda env: renv
-# =============================================================================
-# Analysis D: Insulation score validation
-# =============================================================================
+# Analysis D: Insulation score validation ======================================
 # Maps each SV breakpoint to its reference (HepG2 Micro-C) insulation score and:
 #   (i)  tests whether the breakpoint's reference insulation score differs by
 #        SV tier (TAD+CTCF disrupting expected to be at low-insulation, i.e.
@@ -12,7 +10,6 @@
 # Note: With reference-only insulation, this characterises *positional context*
 #   of SV breakpoints, not patient-specific 3D reorganisation. Patient-specific
 #   Δinsulation requires patient Micro-C/Hi-C which is not available.
-# =============================================================================
 
 suppressPackageStartupMessages({
   library(optparse)
@@ -24,21 +21,27 @@ suppressPackageStartupMessages({
   library(data.table)
   library(stringr)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+DMR_SVS_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 
 option_list <- list(
   make_option("--sv_strat_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.v2.csv.gz"),
+              default = file.path(DMR_SVS_DIR, "sv_tad_ctcf_annotation.v2.csv.gz")),
   make_option("--dmr_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/consensus_dmrs_per_patient.csv.gz"),
+              default = file.path(DMR_SVS_DIR, "01.DMR_recurrence/consensus_dmrs_per_patient.csv.gz")),
   make_option("--insulation_tsv", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/tad_ctcf_validation/insulation_8kb.tsv.gz"),
+              default = file.path(DMR_SVS_DIR, "02.sv_dmr_enrichment/tad_ctcf_validation/insulation_8kb.tsv.gz")),
   make_option("--window_bp", type = "integer", default = 240000L,
               help = "Which insulation window col to use (must match a window_bp in --windows passed to 06b) [default: %default]"),
   make_option("--outdir", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/tad_ctcf_validation"),
+              default = file.path(DMR_SVS_DIR, "02.sv_dmr_enrichment/tad_ctcf_validation")),
   make_option("--run_id", type = "character", default = "tier_v2"),
   make_option("--dmr_window", type = "integer", default = 50000L,
               help = "±window for DMR count near bp [bp]"),
@@ -47,7 +50,7 @@ option_list <- list(
 opt <- parse_args(OptionParser(option_list = option_list))
 if (!dir.exists(opt$outdir)) dir.create(opt$outdir, recursive = TRUE)
 
-# ── Load data ───────────────────────────────────────────────────────────────
+# Load data ====================================================================
 message("Reading SV: ", opt$sv_strat_file)
 sv_df <- fread(opt$sv_strat_file)
 sv_gr <- makeGRangesFromDataFrame(sv_df, keep.extra.columns = TRUE)
@@ -74,7 +77,7 @@ ins_df <- ins_df %>%
 ins_gr <- makeGRangesFromDataFrame(ins_df, keep.extra.columns = TRUE,
                                     seqnames.field = "chrom")
 
-# ── Annotate SV bp with insulation ──────────────────────────────────────────
+# Annotate SV bp with insulation ===============================================
 ov <- findOverlaps(sv_gr, ins_gr, select = "first")
 sv_df$log2_ins          <- ifelse(is.na(ov), NA_real_, mcols(ins_gr)$log2_ins[ov])
 sv_df$boundary_strength <- ifelse(is.na(ov), NA_real_, mcols(ins_gr)$boundary_strength[ov])
@@ -83,7 +86,7 @@ sv_df$is_boundary       <- ifelse(is.na(ov), NA, mcols(ins_gr)$is_boundary[ov])
 cat(sprintf("Annotated %d / %d SV bp with insulation\n",
             sum(!is.na(sv_df$log2_ins)), nrow(sv_df)))
 
-# ── D1. Tier-wise insulation score distribution ─────────────────────────────
+# D1. Tier-wise insulation score distribution ==================================
 sv_df$stratification <- factor(sv_df$stratification, levels = STRAT_LEVELS)
 D1_df <- sv_df %>% dplyr::filter(!is.na(log2_ins))
 
@@ -136,7 +139,7 @@ if (!opt$no_plot) {
   saveRDS(pD1, file.path(opt$outdir, sprintf("%s_D1_tier_insulation.rds", opt$run_id)))
 }
 
-# ── D2. Correlate per-SV insulation with nearby DMR count ──────────────────
+# D2. Correlate per-SV insulation with nearby DMR count ========================
 message("Loading DMRs for per-patient bp-DMR count")
 consensus_dmr <- local({
   raw <- fread(opt$dmr_file)
@@ -215,7 +218,7 @@ if (!opt$no_plot) {
   saveRDS(pD2, file.path(opt$outdir, sprintf("%s_D2_ins_vs_dmr.rds", opt$run_id)))
 }
 
-# ── D3. Within "TAD+CTCF disrupting" tier — does boundary_strength predict DMRs? ──
+# D3. Within TAD+CTCF tier: does boundary_strength predict DMRs? ===============
 # Stratify by boundary_strength quartiles within that tier
 D3_within <- bp_dmr_counts %>%
   dplyr::filter(tier == "TAD+CTCF disrupting", !is.na(bnd_str)) %>%

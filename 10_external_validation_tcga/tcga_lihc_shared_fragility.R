@@ -23,18 +23,24 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(rtracklayer)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD      <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW   <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI      <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-CACHE_DIR <- "/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD      <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW   <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI      <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+CACHE_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/external_validation_cache")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
-LOG_FILE  <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 
 dir.create(CACHE_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(FIG_DIR,   showWarnings = FALSE, recursive = TRUE)
@@ -48,7 +54,7 @@ SEGDUP_WINDOW_BP <- 5000L   # ±5kb for probe-SegDup proximity
 OUR_SV_OR   <- 2.11
 OUR_ADMR_OR <- 2.22
 
-# ── Reference data (shared across both axes) ──────────────────────────────────
+# Reference data (shared across both axes) =====================================
 message("Loading reference annotations...")
 segdup_gr <- import(SEGDUP, format = "BED")
 seqlevelsStyle(segdup_gr) <- "UCSC"
@@ -61,7 +67,7 @@ chrom_sizes <- fread(FAI, col.names = c("chr", "len", "x", "y", "z"),
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
   select(chr, len)
 
-# ── Helper: download with retries ─────────────────────────────────────────────
+# Helper: download with retries ================================================
 safe_download <- function(url, dest, label = "") {
   if (file.exists(dest)) { message("Cache hit: ", dest); return(invisible(dest)) }
   message("Downloading ", label, " → ", dest)
@@ -77,7 +83,7 @@ safe_download <- function(url, dest, label = "") {
   invisible(dest)
 }
 
-# ── Helper: build random controls (chr-matched) ────────────────────────────────
+# Helper: build random controls (chr-matched) ==================================
 make_controls <- function(cases_gr, mult = CTRL_MULT) {
   chr_tab <- table(as.character(seqnames(cases_gr)))
   ctrl_list <- lapply(names(chr_tab), function(ch) {
@@ -90,7 +96,7 @@ make_controls <- function(cases_gr, mult = CTRL_MULT) {
   do.call(c, Filter(Negate(is.null), ctrl_list))
 }
 
-# ── Helper: annotate and run logistic regression ───────────────────────────────
+# Helper: annotate and run logistic regression =================================
 annotate_and_glm <- function(cases_gr, label = "") {
   cases_gr$is_sv <- 1L
   ctrl_gr        <- make_controls(cases_gr)
@@ -135,12 +141,10 @@ annotate_and_glm <- function(cases_gr, label = "") {
   )
 }
 
-# ═════════════════════════════════════════════════════════════════════════════
-# AXIS 1: TCGA-LIHC CNA segment boundaries × SegDup enrichment
+# AXIS 1: TCGA-LIHC CNA segment boundaries × SegDup enrichment =================
 # (SV proxy: somatic copy-number segment breakpoints from GDC open-access data)
 # PCAWG LIHC-US/LIRI-JP require controlled access; CNA boundaries are a validated
 # proxy (~80% overlap with SV breakpoints; PCAWG consortium 2020).
-# ═════════════════════════════════════════════════════════════════════════════
 message("\n=== Axis 1: TCGA-LIHC CNA boundaries × SegDup enrichment ===")
 
 # Download all TCGA-LIHC Copy Number Segment files via GDC API
@@ -256,9 +260,7 @@ if (!is.null(manifest) && nrow(manifest) > 0) {
 
 axis1_df <- if (is.data.frame(axis1_results)) axis1_results else data.frame()
 
-# ═════════════════════════════════════════════════════════════════════════════
-# AXIS 2: TCGA-LIHC 450K probe T-N DMR × SegDup proximity
-# ═════════════════════════════════════════════════════════════════════════════
+# AXIS 2: TCGA-LIHC 450K probe T-N DMR × SegDup proximity ======================
 message("\n=== Axis 2: TCGA-LIHC 450K T-N DMR × SegDup proximity ===")
 
 # Check/install TCGAbiolinks
@@ -480,9 +482,7 @@ if (!is.null(meth_se)) {
   message("Axis 2: skipped (TCGA meth450 unavailable)")
 }
 
-# ═════════════════════════════════════════════════════════════════════════════
-# FIGURE: 3-cohort OR comparison
-# ═════════════════════════════════════════════════════════════════════════════
+# FIGURE: 3-cohort OR comparison ===============================================
 message("\n=== Building comparison figure ===")
 
 # Our cohort reference
@@ -555,7 +555,7 @@ out_fig <- file.path(FIG_DIR, "fig_tcga_validation.png")
 ggsave(out_fig, p_forest, width = 10, height = 5, dpi = 150)
 message("Saved: ", out_fig)
 
-# ── Summary table ──────────────────────────────────────────────────────────────
+# Summary table ================================================================
 summary_tbl <- plot_df |>
   select(label, axis, OR, CI_lo, CI_hi, source) |>
   mutate(OR_lab = sprintf("%.2f [%.2f–%.2f]", OR, CI_lo, CI_hi))
@@ -564,24 +564,5 @@ fwrite(summary_tbl, file.path(OUT_DIR, "tcga_lihc_validation_summary.csv"))
 
 cat("\n=== V1 Summary ===\n")
 print(summary_tbl |> select(label, axis, OR_lab, source))
-
-# ── Log ────────────────────────────────────────────────────────────────────────
-sv_or_str <- if (nrow(axis1_df) > 0) {
-  ax1 <- axis1_df |> filter(predictor == "segdup", model == "Multivariate")
-  paste(paste0(ax1$cohort, " OR=", round(ax1$OR, 2)), collapse = "; ")
-} else "GDC CNA unavailable"
-
-dmr_or_str <- if (!is.null(axis2_results)) {
-  sprintf("TCGA DMR OR=%.2f [p=%.3g]", axis2_results$OR, axis2_results$p)
-} else {
-  "TCGA meth unavailable"
-}
-
-cat(
-  sprintf("[%s] V1 tcga_lihc_shared_fragility: SV axis: %s | DMR axis: %s\n",
-          Sys.Date(), sv_or_str, dmr_or_str),
-  file   = LOG_FILE,
-  append = TRUE
-)
 
 message("\nDone. Outputs in ", OUT_DIR)

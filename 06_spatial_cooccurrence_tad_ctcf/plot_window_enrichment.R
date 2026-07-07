@@ -23,7 +23,7 @@ if (is.null(opt$output)) {
   opt$output <- file.path(opt$outdir, sprintf("combined_enrichment_curves_nperm%d.pdf", opt$nperm))
 }
 
-# ── Load all *_window_enrich_full.csv files ────────────────────────────────
+# Load all *_window_enrich_full.csv files ======================================
 csv_files <- list.files(opt$outdir, pattern = "_window_enrich_full\\.csv$", full.names = TRUE)
 if (length(csv_files) == 0) stop("No *_window_enrich_full.csv files found in: ", opt$outdir)
 

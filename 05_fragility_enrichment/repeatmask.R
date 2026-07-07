@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# =============================================================================
 # Figure S6. RepeatMasker Stratification (Informative Negative Control)
 #
 # Addresses the alternative hypothesis: SegDup aDMR co-enrichment reflects
@@ -7,32 +6,54 @@
 #
 # Panels:
 #   A) OR by repeat-density quartile + Cochran-Q test (p=0.278, I²=22%)
-#   B) OR by dominant repeat class (≥2 aDMR loci)
+#   B) OR by dominant repeat class (>=2 aDMR loci)
 #   C) LINE proportion at SegDup aDMRs vs background (depleted, p<0.0001)
 #
-# If v2 combined RDS exists, re-export to v4/png. Otherwise compute from scratch
-# using reference files (slow: ~10 min).
+# NOTE: this script only re-exports a cached combined-figure RDS (the fast
+# path below). The from-scratch computation that produces panels A-C lived in
+# a separate legacy visualization script that is not part of this repo; if no
+# cached RDS is found, a placeholder figure is written instead of guessing at
+# the analysis.
 #
 # Run:
-#   mamba run -n renv Rscript viz/v4/figS6_repeatmask.R
-# =============================================================================
+#   mamba run -n renv Rscript 05_fragility_enrichment/repeatmask.R
 
 suppressPackageStartupMessages({
   library(data.table)
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-source("/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/viz/v4/shared_theme.R")
-DIRS <- setup_fig_dirs(PATHS$figs_root)
-V2_RDS <- "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2/rds/figS11_repeatmask_stratification.rds"
+# Minimal local helper: this script's figure-export plumbing originally came
+# from a private viz/shared_theme.R framework that is not included in this repo.
+setup_fig_dirs <- function(figs_root) {
+  dirs <- file.path(figs_root, c("panels", "rds", "png", "logs"))
+  invisible(lapply(dirs, dir.create, recursive = TRUE, showWarnings = FALSE))
+  list(panels = file.path(figs_root, "panels"),
+       rds    = file.path(figs_root, "rds"),
+       png    = file.path(figs_root, "png"),
+       logs   = file.path(figs_root, "logs"))
+}
+
+DMR_SVS_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
+PATHS <- list(figs_root = file.path(DMR_SVS_DIR, "figs/v4"))
+
+DIRS   <- setup_fig_dirs(PATHS$figs_root)
+V2_RDS <- file.path(DMR_SVS_DIR, "figs/v2/rds/figS11_repeatmask_stratification.rds")
 
 log_con <- file(file.path(DIRS$logs, "figS6_repeatmask.log"), open = "wt")
 sink(log_con, type = "output", split = TRUE)
 on.exit({ if (sink.number() > 0) sink(type = "output"); close(log_con) }, add = TRUE)
 cat("=== Figure S6 RepeatMasker Stratification (v4) ===\n")
 
-# ── Fast path: use cached v2 combined figure ──────────────────────────────────
+# Fast path: use cached v2 combined figure =====================================
 if (file.exists(V2_RDS)) {
   cat("[figS6] Loading from v2 cached RDS:", V2_RDS, "\n")
   raw_obj <- readRDS(V2_RDS)
@@ -51,56 +72,17 @@ if (file.exists(V2_RDS)) {
   ggsave(file.path(DIRS$png, "figS6.png"), fig_obj,
          width = 13, height = 9, dpi = 300, bg = "white")
   cat(sprintf("[Output] figS6.png (from v2 cache) → %s\n", file.path(DIRS$png, "figS6.png")))
-  log_decision("figS6_repeatmask.R: loaded from v2 cached RDS; OR homogeneous (Cochran-Q p=0.278); LINE depleted 19.5% vs 28.2%")
   quit(save = "no")
 }
 
-# ── Slow path: compute from scratch (requires gold/silver + SegDup + RMSK) ────
-cat("[figS6] v2 RDS not found — computing from scratch\n")
-cat("  This may take ~10 min. Running v2 figS6 computation logic ...\n")
-
-gold <- safe_fread(PATHS$gold)
-silv <- safe_fread(PATHS$silver)
-
-if (is.null(gold)) {
-  cat("[figS6] ERROR: gold tier not found; cannot compute\n")
-  placeholder <- ggplot() +
-    annotate("text", x=0.5, y=0.5,
-             label="figS6: Run viz/v2/figS6_repeatmask_stratification.R first to generate cache",
-             size=4, color="grey40") + theme_void()
-  ggsave(file.path(DIRS$png, "figS6.png"), placeholder,
-         width=13, height=9, dpi=300, bg="white")
-  log_decision("figS6_repeatmask.R: SKIPPED — no v2 RDS cache and gold tier not found")
-  quit(save = "no")
-}
-
-# Source the v2 script logic (runs the full computation and saves panels)
-# The v2 script writes its panels to v2/panels/; we'll regenerate to v4/panels/
-# The cleanest approach is to run the v2 script and then re-save to v4
-v2_script <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/viz/v2/figS6_repeatmask_stratification.R"
-if (file.exists(v2_script)) {
-  cat("[figS6] Sourcing v2 script for computation ...\n")
-  tryCatch({
-    source(v2_script)
-    # After sourcing, look for the combined figure in v2 rds
-    if (file.exists(V2_RDS)) {
-      fig_obj <- readRDS(V2_RDS)
-      saveRDS(fig_obj, file.path(DIRS$rds, "figS6_combined.rds"))
-      ggsave(file.path(DIRS$png, "figS6.png"), fig_obj,
-             width=13, height=9, dpi=300, bg="white")
-      cat(sprintf("[Output] figS6.png (via v2 source) → %s\n", file.path(DIRS$png, "figS6.png")))
-    }
-  }, error = function(e) {
-    cat("[figS6] Error sourcing v2:", conditionMessage(e), "\n")
-  })
-} else {
-  cat("[figS6] v2 script not found; writing placeholder\n")
-  placeholder <- ggplot() +
-    annotate("text", x=0.5, y=0.5,
-             label="figS6: Run viz/v2/figS6_repeatmask_stratification.R first",
-             size=4, color="grey40") + theme_void()
-  ggsave(file.path(DIRS$png, "figS6.png"), placeholder,
-         width=13, height=9, dpi=300, bg="white")
-}
-
-log_decision("figS6_repeatmask.R: OR homogeneous across quartiles (Cochran-Q p=0.278, I²=22%); LINE depleted 19.5% vs 28.2% p<0.0001")
+# No cache found: the from-scratch RepeatMasker stratification computation
+# (OR by quartile, repeat-class breakdown, LINE depletion test) is not
+# included in this repo — write a placeholder instead of guessing at it. =======
+cat("[figS6] v2 RDS not found; from-scratch computation is not part of this repo\n")
+placeholder <- ggplot() +
+  annotate("text", x=0.5, y=0.5,
+           label="figS6: cached RDS not found; from-scratch RepeatMasker\nstratification computation is not included in this repo",
+           size=4, color="grey40") + theme_void()
+ggsave(file.path(DIRS$png, "figS6.png"), placeholder,
+       width=13, height=9, dpi=300, bg="white")
+cat(sprintf("[Output] figS6.png (placeholder) → %s\n", file.path(DIRS$png, "figS6.png")))

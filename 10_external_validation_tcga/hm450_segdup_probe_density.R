@@ -23,15 +23,22 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-METH_RDS <- "/node200data/kachungk/hcc_data/DMR_SVs/tcga_cache/tcga_lihc_meth450k_se.rds"
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-FAI      <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+METH_RDS <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/tcga_cache/tcga_lihc_meth450k_se.rds")
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+FAI      <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR  <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
-# ── 1. All HM450 probe coordinates ──────────────────────────────────────────
+# 1. All HM450 probe coordinates ===============================================
 message("Loading HM450 probes from cached SE...")
 meth_se   <- readRDS(METH_RDS)
 probe_gr  <- rowRanges(meth_se)
@@ -46,7 +53,7 @@ cat(sprintf("Total HM450 probes (autosomes + chrX/Y): %d\n", length(probe_gr)))
 dmr_csv <- file.path(OUT_DIR, "tcga_lihc_dmr_segdup_proximity.csv")
 has_dmr_list <- file.exists(dmr_csv)
 
-# ── 2. SegDup regions ────────────────────────────────────────────────────────
+# 2. SegDup regions ============================================================
 message("Loading SegDup...")
 segdup_raw <- import(SEGDUP, format = "BED")
 seqlevelsStyle(segdup_raw) <- "UCSC"
@@ -57,7 +64,7 @@ cat(sprintf("SegDup regions (merged): %d, total bp: %s\n",
             length(segdup_gr),
             format(sum(as.numeric(width(segdup_gr))), big.mark = ",")))
 
-# ── 3. Chrom sizes ────────────────────────────────────────────────────────────
+# 3. Chrom sizes ===============================================================
 chrom_df <- fread(FAI,
                   col.names = c("chr", "len", "x", "y", "z"),
                   data.table = FALSE) |>
@@ -69,7 +76,7 @@ cat(sprintf("Genome: %.2f Gb | SegDup: %.0f Mb (%.1f%%) | non-SegDup: %.2f Gb\n"
             genome_bp / 1e9, segdup_bp / 1e6,
             100 * segdup_bp / genome_bp, nonsegdup_bp / 1e9))
 
-# ── 4. Probe overlap with SegDup ─────────────────────────────────────────────
+# 4. Probe overlap with SegDup =================================================
 message("Overlapping probes with SegDup...")
 probe_in_segdup  <- overlapsAny(probe_gr, segdup_gr)
 n_probe_segdup   <- sum(probe_in_segdup)
@@ -92,7 +99,7 @@ cat(sprintf("  Genome    : %d probes / %.2f Gb = %.4f probes/kb\n",
 cat(sprintf("  Depletion ratio (SegDup/non-SegDup): %.3f (%.1f%% of expected)\n",
             depletion_ratio, 100 * depletion_ratio))
 
-# ── 5. Expected OR attenuation ───────────────────────────────────────────────
+# 5. Expected OR attenuation ===================================================
 # If true SegDup enrichment OR = 2.22 (aDMR), and HM450 probes are depleted
 # in SegDup by factor D, the observable OR is attenuated to:
 #   OR_obs ≈ OR_true * D   (first-order approximation for small enrichment)
@@ -116,7 +123,7 @@ cat(sprintf("Observed C17 OR              : %.3f\n", obs_or_c17))
 cat(sprintf("Residual unexplained attenuation: %.3f\n",
             obs_or_c17 - expected_or_under_depletion_admr))
 
-# ── 6. Per-chromosome breakdown ──────────────────────────────────────────────
+# 6. Per-chromosome breakdown ==================================================
 chr_stats <- lapply(chrom_df$chr, function(ch) {
   pr_chr <- probe_gr[seqnames(probe_gr) == ch]
   sd_chr <- segdup_gr[seqnames(segdup_gr) == ch]
@@ -141,7 +148,7 @@ chr_stats <- lapply(chrom_df$chr, function(ch) {
 chr_stats <- chr_stats |>
   mutate(depletion = probe_density_segdup / probe_density_nonseg)
 
-# ── 7. Save summary ──────────────────────────────────────────────────────────
+# 7. Save summary ==============================================================
 summary_df <- data.frame(
   metric = c(
     "n_probes_total", "n_probes_in_segdup", "n_probes_not_segdup",
@@ -169,7 +176,7 @@ fwrite(summary_df, file.path(OUT_DIR, "c17_hm450_segdup_probe_density.csv"))
 fwrite(chr_stats,  file.path(OUT_DIR, "c17_hm450_segdup_probe_density_per_chr.csv"))
 message("Wrote: c17_hm450_segdup_probe_density.csv")
 
-# ── 8. Figure ────────────────────────────────────────────────────────────────
+# 8. Figure ====================================================================
 # Panel A: probe density comparison bar
 bar_df <- data.frame(
   region  = c("SegDup", "Non-SegDup", "Genome"),

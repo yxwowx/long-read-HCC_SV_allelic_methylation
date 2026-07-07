@@ -8,7 +8,7 @@
 #
 # Usage:
 #   mamba run -n renv Rscript pipeline/02_sv_annotation_stratify.R \
-#     [--outdir /node200data/kachungk/hcc_data/DMR_SVs] \
+#     [--outdir $HCC_DATA_DIR/DMR_SVs] \
 #     [--tad_bed <path>] [--ctcf_bed <path>] \
 #     [--prom_rds <path>] [--gene_rds <path>] \
 #     2>&1 | tee logs/02_sv_annotation_stratify.log
@@ -24,17 +24,24 @@ suppressPackageStartupMessages({
   library(optparse)
   library(tidyr)
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+DMR_SVS_DIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
+REF_ROOT    <- Sys.getenv("REFERENCE_DIR")
+
+# Constants ====================================================================
 HBV_JUNCTION_FLANK     <- 500L
 COMPLEX_DETAILED_TYPES <- c(
   "Templated_ins", "Templated_ins_inv", "inv_tra", "complex_inv"
 )
 
-# ── Functions ─────────────────────────────────────────────────────────────────
+# Functions ====================================================================
 simple_svtype <- function(gr) {
   partner_id  <- mcols(gr)$partner
   partner_idx <- match(partner_id, names(gr))
@@ -130,7 +137,7 @@ classify_sv_cnv_final <- function(sv_gr, seg_gr = NULL) {
   n <- length(sv_gr)
   if (n == 0) return(sv_gr)
   if (!"geom_type" %in% names(mcols(sv_gr)))
-    stop("sv_gr에 $geom_type 없음. simple_svtype() 먼저 실행하세요.")
+    stop("sv_gr is missing $geom_type. Run simple_svtype() first.")
 
   sv_mcols  <- mcols(sv_gr)
   svlen_col <- if ("svlen" %in% names(sv_mcols)) "svlen" else
@@ -239,7 +246,7 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
   geom        <- as.character(mcols(sv_gr)$geom_type)
   sv_buffer   <- resize(sv_gr, width = 4000L, fix = "center")
 
-  # ── Shared index sets ──────────────────────────────────────────────────────
+  # Shared index sets ==========================================================
   paired_idx     <- which(!is.na(partner_idx))
   intra_geom     <- c("DEL", "DUP", "INV", "COM")
   same_chr_mask  <- logical(n)
@@ -248,10 +255,10 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
       as.character(seqnames(sv_gr))[partner_idx[paired_idx]]
   intra_idx <- which(!is.na(partner_idx) & geom %in% intra_geom & same_chr_mask)
 
-  # ── Pre-compute which boundary regions contain CTCF peaks ─────────────────
+  # Pre-compute which boundary regions contain CTCF peaks ======================
   bound_has_ctcf <- overlapsAny(tad_bound_gr, ctcf_gr)
 
-  # ── Condition A: BP1 and BP2 belong to different TAD bodies ───────────────
+  # Condition A: BP1 and BP2 belong to different TAD bodies ====================
   # Priority: strongest evidence — SV must span ≥1 boundary
   tad_A <- logical(n)
   if (length(intra_idx) > 0) {
@@ -264,14 +271,14 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
     tad_A[partner_idx[intra_idx[cond_A]]] <- TRUE
   }
 
-  # ── Condition B: BP directly overlaps a TAD boundary gap region ───────────
+  # Condition B: BP directly overlaps a TAD boundary gap region ================
   # boundary region = gap between TAD_i.end and TAD_{i+1}.start (or ±25kb fallback)
   tad_B_bp <- overlapsAny(sv_gr, tad_bound_gr)
   tad_B    <- tad_B_bp
   if (length(paired_idx) > 0)
     tad_B[paired_idx] <- tad_B_bp[paired_idx] | tad_B_bp[partner_idx[paired_idx]]
 
-  # ── Condition C: SV span crosses a boundary region ────────────────────────
+  # Condition C: SV span crosses a boundary region =============================
   tad_C <- logical(n)
   if (length(intra_idx) > 0) {
     b1s <- sv_gr[intra_idx]
@@ -292,7 +299,7 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
   if (length(other_idx) > 0)
     tad_C[other_idx] <- overlapsAny(sv_buffer[other_idx], tad_bound_gr)
 
-  # ── Combined TAD disruption (priority A ≥ B > C) ─────────────────────────
+  # Combined TAD disruption (priority A ≥ B > C) ===============================
   ov_tad <- tad_A | tad_B | tad_C
   tad_condition <- dplyr::case_when(
     tad_A                              ~ "A",
@@ -301,7 +308,7 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
     TRUE                               ~ NA_character_
   )
 
-  # ── CTCF within disrupted boundary region ─────────────────────────────────
+  # CTCF within disrupted boundary region ======================================
   # "TAD+CTCF disrupting" requires CTCF peak inside the affected boundary gap,
   # not just at the breakpoint; "CTCF-only" retains per-breakpoint check.
   ctcf_in_boundary <- logical(n)
@@ -337,13 +344,13 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
     }
   }
 
-  # ── Per-breakpoint CTCF overlap (used only for the CTCF-only tier) ─────────
+  # Per-breakpoint CTCF overlap (used only for the CTCF-only tier) =============
   ov_ctcf_bp <- overlapsAny(sv_buffer, ctcf_gr)
   if (length(paired_idx) > 0)
     ov_ctcf_bp[paired_idx] <- ov_ctcf_bp[paired_idx] |
                                ov_ctcf_bp[partner_idx[paired_idx]]
 
-  # ── Distance to nearest feature ────────────────────────────────────────────
+  # Distance to nearest feature ================================================
   dist_to_nearest <- function(query_gr, subject_gr) {
     if (length(subject_gr) == 0) return(rep(NA_real_, length(query_gr)))
     hits <- distanceToNearest(query_gr, subject_gr, ignore.strand = TRUE)
@@ -354,7 +361,7 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
   mcols(sv_gr)$dist_to_TAD  <- dist_to_nearest(sv_gr, tad_bound_gr)
   mcols(sv_gr)$dist_to_CTCF <- dist_to_nearest(sv_gr, ctcf_gr)
 
-  # ── Tier classification ────────────────────────────────────────────────────
+  # Tier classification ========================================================
   mcols(sv_gr)$stratification <- dplyr::case_when(
     sv_gr$is_hbv                                            ~ "HBV-associated",
     ov_tad & ctcf_in_boundary                               ~ "TAD+CTCF disrupting",
@@ -390,38 +397,38 @@ sv_stratification <- function(sv_gr, tad_body_gr, tad_bound_gr, ctcf_gr, hbv_gen
   sv_gr
 }
 
-# ── CLI options ───────────────────────────────────────────────────────────────
+# CLI options ==================================================================
 option_list <- list(
   make_option(c("-t", "--tad_bed"),  type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_tad.bed",
+    default = file.path(REF_ROOT, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_tad.bed"),
     help = "HepG2 Micro-C TAD boundary BED (hg38) [default: %default]"),
   make_option(c("-c", "--ctcf_bed"), type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz",
+    default = file.path(REF_ROOT, "ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz"),
     help = "ENCODE HepG2 CTCF peak BED (hg38) [default: %default]"),
   make_option(c("-o", "--outdir"),   type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/",
+    default = paste0(DMR_SVS_DIR, "/"),
     help = "Output directory [default: %default]"),
   make_option(c("--hbv_genome_len"), type = "integer", default = 3215L,
     help = "HBV contig length in bp [default: %default]"),
   make_option(c("--prom_rds"),       type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/canonical_promoters_hg38.gencode_v49.rds",
+    default = file.path(DMR_SVS_DIR, "canonical_promoters_hg38.gencode_v49.rds"),
     help = "GENCODE v49 canonical promoters RDS [default: %default]"),
   make_option(c("--gene_rds"),       type = "character",
-    default = "/node200data/kachungk/hcc_data/DMR_SVs/canonical_genes_hg38.gencode_v49.rds",
+    default = file.path(DMR_SVS_DIR, "canonical_genes_hg38.gencode_v49.rds"),
     help = "GENCODE v49 canonical genes RDS [default: %default]"),
   make_option(c("-g", "--gene_gtf"),      type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/gencode.v49.basic.annotation.gtf.gz",
+    default = file.path(REF_ROOT, "gencode.v49.basic.annotation.gtf.gz"),
     help = "GTF for gene annotation used if --prom_rds or --gene_rds not found [default: %default]"),
   make_option(c("--out_suffix"),          type = "character", default = "",
     help = "Optional suffix appended before .csv.gz in all three output filenames [default: none]"),
   make_option(c("--chromhmm_liver"), type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/chromHMM/E066_15_coreMarks_hg38lift_mnemonics.bed.gz",
+    default = file.path(REF_ROOT, "chromHMM/E066_15_coreMarks_hg38lift_mnemonics.bed.gz"),
     help = "Roadmap E066 liver ChromHMM 15-state BED.gz (active states filtered) [default: %default]"),
   make_option(c("--chromhmm_hepg2"), type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/chromHMM/E118_15_coreMarks_hg38lift_mnemonics.bed.gz",
+    default = file.path(REF_ROOT, "chromHMM/E118_15_coreMarks_hg38lift_mnemonics.bed.gz"),
     help = "Roadmap E118 HepG2 ChromHMM 15-state BED.gz (combined with --chromhmm_liver) [default: %default]"),
   make_option(c("--enhancer_bed"),   type = "character",
-    default = "/node200data/kachungk/reference/GRCh38/genomic_element/hg38_genehancer_enhancer.bed",
+    default = file.path(REF_ROOT, "genomic_element/hg38_genehancer_enhancer.bed"),
     help = "GeneHancer enhancer BED (liver-annotated) [default: %default]")
 )
 opt <- parse_args(OptionParser(option_list = option_list))
@@ -430,10 +437,8 @@ if (!dir.exists(opt$outdir))
   dir.create(opt$outdir, recursive = TRUE)
 dir.create(file.path(opt$outdir, "logs"), showWarnings = FALSE, recursive = TRUE)
 
-DEC_LOG <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
-
-# ── 1. Load SV VCFs ───────────────────────────────────────────────────────────
-setwd("/node200data/kachungk/hcc_data/hg38+HBV/somatic_sv")
+# 1. Load SV VCFs ==============================================================
+setwd(file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/somatic_sv"))
 
 info_cols <- c("MATE_ID", "MAPQ", "DETAILED_TYPE", "INSIDE_VNTR",
                "LOW_COV_IN", "HP", "PHASESETID")
@@ -497,7 +502,7 @@ PATIENT_IDS <- names(sv_list)
 message(sprintf("Loaded SVs for %d patients: %s",
                 length(PATIENT_IDS), paste(PATIENT_IDS, collapse = ", ")))
 
-# ── 2. Load PURPLE CNV segments ───────────────────────────────────────────────
+# 2. Load PURPLE CNV segments ==================================================
 cnv_files <- list.files(
   "../../cnv_deepsomatic.out_hg38/purple",
   pattern = "*tumor.purple.segment.tsv$",
@@ -521,10 +526,10 @@ cnv_segments <- lapply(cnv_files, function(x) {
   makeGRangesFromDataFrame(keep.extra.columns = TRUE) %>%
   split(mcols(.)$sample)
 
-# ── 3. CNV classification ─────────────────────────────────────────────────────
+# 3. CNV classification ========================================================
 sv_list_classified <- lapply(PATIENT_IDS, function(pt) {
   classified <- classify_sv_cnv_final(sv_list[[pt]], cnv_segments[[pt]])
-  cat(sprintf("\n[%s] CNV class 분포:\n", pt))
+  cat(sprintf("\n[%s] CNV class distribution:\n", pt))
   print(table(mcols(classified)$cnv_class,
               mcols(classified)$cnv_class_source,
               dnn = c("cnv_class", "source")))
@@ -533,7 +538,7 @@ sv_list_classified <- lapply(PATIENT_IDS, function(pt) {
 
 rm(sv_list, cnv_segments); gc()
 
-# ── 4. Load TAD / CTCF references ────────────────────────────────────────────
+# 4. Load TAD / CTCF references ================================================
 ctcf_gr <- fread(opt$ctcf_bed) %>%
   makeGRangesFromDataFrame(seqnames.field = "V1", start.field = "V2", end.field = "V3")
 
@@ -580,7 +585,7 @@ message(sprintf("TAD bodies: %d | boundary regions: %d (%d gap-based, %d ±%dkb 
                 TAD_BOUNDARY_FALLBACK_BP / 1000L,
                 length(unique(as.character(seqnames(tad_bound_gr))))))
 
-# ── 4b. Load CRE references (liver ChromHMM + GeneHancer) ────────────────────
+# 4b. Load CRE references (liver ChromHMM + GeneHancer) ========================
 load_chromhmm_active <- function(path) {
   if (is.null(path) || !file.exists(path)) return(GRanges())
   dt <- data.table::fread(path, col.names = c("seqnames", "start", "end", "state"))
@@ -606,7 +611,7 @@ message(sprintf("CRE references loaded: ChromHMM liver+HepG2 active = %d regions
                 length(cre_liver_gr),
                 if (!is.null(enhancer_gr)) length(enhancer_gr) else 0L))
 
-# ── 5. TAD / CTCF stratification + CRE annotation ────────────────────────────
+# 5. TAD / CTCF stratification + CRE annotation ================================
 sv_list_strat <- lapply(
   sv_list_classified,
   sv_stratification,
@@ -626,12 +631,12 @@ cat("=== CRE sub-tier (TAD+CTCF disrupting only) ===\n")
 print(sv_df %>% dplyr::filter(stratification == "TAD+CTCF disrupting") %>%
         dplyr::count(tad_ctcf_cre_subtier) %>% as.data.frame())
 
-# 6. Write sv_tad_ctcf_annotation.csv.gz =====================================
+# 6. Write sv_tad_ctcf_annotation.csv.gz =======================================
 out_strat <- file.path(opt$outdir, paste0("sv_tad_ctcf_annotation", opt$out_suffix, ".csv.gz"))
 fwrite(sv_df, out_strat)
 message("Stratification saved to: ", out_strat)
 
-#  7. Gene annotation (GENCODE v49) ===========================================
+# 7. Gene annotation (GENCODE v49) =============================================
 if (!file.exists(opt$prom_rds) || !file.exists(opt$gene_rds)) {
   message("RDS files for gene annotation not found.\n Create promoter/gene rds file with given GTF file")
   annot <- rtracklayer::import(opt$gene_gtf) #nolint
@@ -766,7 +771,7 @@ nearby_dt[, dist_to_sv := abs(sv_pos_nb - tss_pos_nb)]
 message(sprintf("  SV–gene pairs ±50 kb: %d (unique genes: %d)",
                 nrow(nearby_dt), uniqueN(nearby_dt$gene_name)))
 
-# ── 8. Compile and write gene annotation outputs ─────────────────────────────
+# 8. Compile and write gene annotation outputs =================================
 sv_meta <- sv_dt[, .(
   sv_id    = bp_id,
   seqnames, start,
@@ -803,7 +808,7 @@ fwrite(long_out, LONG_OUT, compress = "gzip")
 message(sprintf("\nNear-gene output : %d rows → %s", nrow(near_out), NEAR_OUT))
 message(sprintf("Long-format output: %d rows → %s", nrow(long_out), LONG_OUT))
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# Summary ======================================================================
 message("\n=== Annotation summary ===")
 message(sprintf("Total breakpoints    : %d", nrow(near_out)))
 message(sprintf("Promoter overlap     : %d (%.1f%%)",
@@ -820,13 +825,5 @@ print(near_out[, .(
   n_in_gene   = sum(gene_body_overlap),
   n_uniq_gene = uniqueN(nearest_gene)
 ), by = sv_tier])
-
-# ── Decision log ──────────────────────────────────────────────────────────────
-if (!dir.exists(dirname(DEC_LOG)))
-  dir.create(dirname(DEC_LOG), recursive = TRUE, showWarnings = FALSE)
-cat(sprintf(
-  "[%s] 02_sv_annotation_stratify.R: %d SV bp stratified; %d uniq nearest genes; %d SV-gene pairs ±50 kb\n",
-  format(Sys.Date()), nrow(near_out), uniqueN(near_out$nearest_gene), nrow(long_out)
-), file = DEC_LOG, append = TRUE)
 
 message("\nDone.")

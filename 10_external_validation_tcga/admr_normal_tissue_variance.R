@@ -24,20 +24,27 @@ suppressPackageStartupMessages({
   library(SummarizedExperiment)
 })
 
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
 set.seed(42)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-METH_CACHE <- "/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache/LIHC_meth450.rds"
-GOLD_CSV   <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILVER_CSV <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-OUT_DIR    <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+METH_CACHE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/external_validation_cache/LIHC_meth450.rds")
+GOLD_CSV   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILVER_CSV <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+OUT_DIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR    <- file.path(OUT_DIR, "figures")
-LOG_FILE   <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 PROBE_WINDOW_BP <- 2000L   # ±2kb around aDMR center to match probes
 
-# ── 1. Load cached TCGA normal methylation ────────────────────────────────────
+# 1. Load cached TCGA normal methylation =======================================
 message("Loading TCGA-LIHC 450K (cached)...")
 meth_se  <- readRDS(METH_CACHE)
 meth_mat <- assay(meth_se)          # probes × samples
@@ -79,7 +86,7 @@ cat(sprintf("Probe variance computed: median=%.4f, IQR=[%.4f, %.4f]\n",
             quantile(probe_sd, 0.25, na.rm = TRUE),
             quantile(probe_sd, 0.75, na.rm = TRUE)))
 
-# ── 2. Load aDMR loci ─────────────────────────────────────────────────────────
+# 2. Load aDMR loci ============================================================
 message("\nLoading aDMR loci...")
 load_admr <- function(csv, tier_name) {
   dt  <- fread(csv, data.table = FALSE)
@@ -99,7 +106,7 @@ silver_gr <- unique(silver_gr)
 cat(sprintf("Unique Gold aDMR: %d | Silver: %d\n",
             length(gold_gr), length(silver_gr)))
 
-# ── 3. Map probes to aDMR loci (±2kb window) ──────────────────────────────────
+# 3. Map probes to aDMR loci (±2kb window) =====================================
 message("Matching probes to aDMR loci...")
 
 # Expand aDMR loci by ±PROBE_WINDOW_BP
@@ -119,7 +126,7 @@ cat(sprintf("Probes overlapping Gold aDMR (±%dkb): %d\n",
 cat(sprintf("Probes overlapping Silver aDMR (±%dkb): %d\n",
             PROBE_WINDOW_BP / 1000, sum(probe_is_silver)))
 
-# ── 4. Per-aDMR locus: mean variance of matched probes ────────────────────────
+# 4. Per-aDMR locus: mean variance of matched probes ===========================
 # For each Gold/Silver locus: collect probe SDs → use median as locus-level estimate
 locus_variance <- function(admr_win_gr, label) {
   lapply(seq_len(length(admr_win_gr)), function(i) {
@@ -146,7 +153,7 @@ cat(sprintf("Gold loci with probes: %d / %d\n",
 cat(sprintf("Silver loci with probes: %d / %d\n",
             nrow(silver_var), length(silver_gr)))
 
-# ── 5. Background: matched random loci ────────────────────────────────────────
+# 5. Background: matched random loci ===========================================
 message("Generating matched background loci...")
 # Sample random probes (same number as Gold, with replacement for 1000 permutations)
 bg_probes_idx <- which(!probe_is_gold & !probe_is_silver)
@@ -161,7 +168,7 @@ null_sds <- replicate(n_perm, {
 
 null_df <- data.frame(tier = "Background (permuted)", median_sd = null_sds)
 
-# ── 6. Statistical tests ───────────────────────────────────────────────────────
+# 6. Statistical tests =========================================================
 message("Running statistical tests...")
 
 all_probe_df <- data.frame(
@@ -213,7 +220,7 @@ result_df <- data.frame(
 fwrite(result_df, file.path(OUT_DIR, "admr_normal_variance.csv"))
 message("Saved: admr_normal_variance.csv")
 
-# ── 7. Figures ────────────────────────────────────────────────────────────────
+# 7. Figures ===================================================================
 message("\nGenerating figures...")
 theme_hcc <- theme_classic(base_size = 12) +
   theme(strip.background = element_rect(fill = "grey95", color = NA))
@@ -295,15 +302,5 @@ ggsave(file.path(FIG_DIR, "fig_s9a_admr_normal_variance_density.png"),
 ggsave(file.path(FIG_DIR, "fig_s9b_admr_normal_variance_locus.png"),
        p_box,     width = 6, height = 5, dpi = 150)
 message("Saved: fig_s9a + fig_s9b")
-
-# ── 8. Log ────────────────────────────────────────────────────────────────────
-cat(
-  sprintf("[%s] P1-D admr_normal_tissue_variance: Gold FC=%.2fx p=%s; Silver FC=%.2fx p=%s; perm_p=%.4f\n",
-          Sys.Date(),
-          med_gold / med_bg,   sig_label(wt_gold$p.value),
-          med_silver / med_bg, sig_label(wt_silver$p.value),
-          perm_p_gold),
-  file = LOG_FILE, append = TRUE
-)
 
 message("\nDone.")

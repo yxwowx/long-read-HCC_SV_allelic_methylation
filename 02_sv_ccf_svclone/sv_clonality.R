@@ -10,7 +10,7 @@
 # Input:
 #   result/svclone/sv_timing_per_patient.csv — SVclone CCF + timing per SV
 #   result/sv_fragility_annotation.csv       — SegDup/fragility annotations (P-codes)
-#   ~/patient_code_mapping.csv               — JJT → P1 sample name mapping
+#   $PATIENT_CODE_MAP                        — JJT → P1 sample name mapping
 #
 # Output:
 #   result/sv_clonality_fragility.csv
@@ -21,22 +21,27 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-BASE     <- "/node200data/kachungk/hcc_data/DMR_SVs"
+BASE     <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 SVCLONE  <- file.path(BASE, "result/svclone")
 FRAG_F   <- file.path(BASE, "result/sv_fragility_annotation.csv")
 TAD_F    <- file.path(BASE, "sv_tad_ctcf_annotation.csv.gz")
-MAP_F    <- path.expand("~/patient_code_mapping.csv")
 OUT_DIR  <- file.path(BASE, "result")
 FIG_DIR  <- file.path(OUT_DIR, "figures")
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 TIMING_LEVELS <- c("early clonal", "clonal [NA]", "late clonal", "subclonal")
 
-# 1. Load inputs =====================================================
+# 1. Load inputs ===============================================================
 timing_f <- file.path(SVCLONE, "sv_timing_per_patient.csv")
 if (!file.exists(timing_f)) stop("sv_timing_per_patient.csv not found. Run prerequisite scripts.")
 
@@ -45,17 +50,17 @@ sv_dt <- fread(timing_f)
 sv_dt[, timing := factor(timing, levels = TIMING_LEVELS)]
 
 # Patient code mapping
-pmap <- fread(MAP_F)
+pmap <- fread(PATIENT_MAP_PATH)
 pmap[, sample_short := sub("_HCC$", "", Samples_ID)]
 code_map <- pmap[, .(sample = sample_short, patient_code)]
 sv_dt <- merge(sv_dt, code_map, by = "sample", all.x = TRUE)
 
-# 2. Load fragility annotation (uses patient_code = P1..P12) ============
+# 2. Load fragility annotation (uses patient_code = P1..P12) ===================
 message("Loading fragility annotation ...")
 frag <- fread(FRAG_F)
 frag[, start := as.integer(start)]
 
-# 3. Positional join SVclone → fragility (within ±50 bp) ================
+# 3. Positional join SVclone -> fragility (within +/-50 bp) ====================
 message("Positional join SVclone ↔ fragility ...")
 sv_dt[, seqnames := as.character(chr1)]
 sv_dt[, bp_pos   := as.integer(pos1)]
@@ -73,13 +78,13 @@ n_matched <- sum(!is.na(matched$bp_id))
 cat(sprintf("Matched SVclone → bp_id: %d / %d SVclone records (%.0f%%)\n",
             n_matched, nrow(sv_dt), 100 * n_matched / nrow(sv_dt)))
 
-# 4. Load VAF from TAD file and join ====================================
+# 4. Load VAF from TAD file and join ===========================================
 message("Loading VAF from TAD annotation ...")
 tad_vaf <- fread(TAD_F, select = c("bp_id", "VAF", "hVAF_H0", "hVAF_H1", "hVAF_H2", "vaf_concordant"))
 tad_vaf <- unique(tad_vaf, by = "bp_id")
 matched <- merge(matched, tad_vaf, by = "bp_id", all.x = TRUE)
 
-# 5. Build final table ===================================================
+# 5. Build final table =========================================================
 df <- matched[, .(
   bp_id, seqnames, start, svtype,
   sample = i.sample,          # actual patient name (JJT etc.)
@@ -92,7 +97,7 @@ df <- matched[, .(
 )]
 df[, segdup_lab := ifelse(segdup_overlap, "SegDup SV", "Non-SegDup SV")]
 
-# 5. Statistical tests ===================================================
+# 6. Statistical tests =========================================================
 df_test <- df[!is.na(CCF) & !is.na(segdup_overlap)]
 
 wt_ccf <- if (nrow(df_test) > 5)
@@ -111,11 +116,11 @@ timing_tab <- df[!is.na(timing), .N, by = .(segdup_lab, timing)][order(segdup_la
 cat("\n=== Timing × SegDup ===\n")
 print(dcast(timing_tab, segdup_lab ~ timing, value.var = "N", fill = 0L))
 
-# 6. Save CSV ===================================================
+# 7. Save CSV ==================================================================
 fwrite(df, file.path(OUT_DIR, "sv_clonality_fragility.csv"))
 message("Wrote: sv_clonality_fragility.csv")
 
-# 7. Figures ====================================================
+# 8. Figures ===================================================================
 pal <- c("SegDup SV" = "#d73027", "Non-SegDup SV" = "#4393c3")
 pal_timing <- c(
   "early clonal" = "#d73027", "clonal [NA]" = "#fc8d59",
@@ -182,11 +187,4 @@ ggsave(file.path(FIG_DIR, "fig_sv_clonality.png"), combined, width = 12, height 
 ggsave(file.path(FIG_DIR, "fig_sv_clonality.pdf"), combined, width = 12, height = 9)
 message("Saved: fig_sv_clonality.png/pdf")
 
-# 8. Log ====================================================
-cat(sprintf("[%s] sv_clonality: n=%d matched SVs, median_CCF_segdup=%.3f, median_CCF_nonsegdup=%.3f, p_ccf=%.4g\n",
-            Sys.Date(), nrow(df_test),
-            summary_stats[segdup_lab == "SegDup SV",     median_CCF],
-            summary_stats[segdup_lab == "Non-SegDup SV", median_CCF],
-            wt_ccf$p.value),
-    file = LOG_FILE, append = TRUE)
 message("Done.")

@@ -21,22 +21,29 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 N_CTRL_MULT <- 10
 
-# ── 1. Load unique aDMR loci with nCG ────────────────────────────────────────
+# 1. Load unique aDMR loci with nCG ============================================
 message("Loading aDMR coordinates + nCG...")
 admr_cols <- c("tier_class", "admr_chr", "admr_start", "admr_end", "nCG")
 gold <- fread(GOLD_FILE, data.table = FALSE) |> select(all_of(admr_cols))
@@ -64,7 +71,7 @@ admr_gr <- GRanges(
   log10_cpg = admr$log10_cpg
 )
 
-# ── 2. Generate matched random control regions ────────────────────────────────
+# 2. Generate matched random control regions ===================================
 message("Generating matched controls...")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z"), data.table = FALSE) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
@@ -88,7 +95,7 @@ ctrl_list <- lapply(seq_len(nrow(admr)), function(i) {
 ctrl_gr <- do.call(c, Filter(Negate(is.null), ctrl_list))
 cat(sprintf("Controls generated: %d\n", length(ctrl_gr)))
 
-# ── 3. Count CpG dinucleotides in control regions via BSgenome ───────────────
+# 3. Count CpG dinucleotides in control regions via BSgenome ===================
 message("Counting CpGs in control regions (BSgenome)...")
 ctrl_seqs      <- getSeq(bsgenome, ctrl_gr)
 ctrl_cpg_cnt   <- vcountPattern("CG", ctrl_seqs)
@@ -100,7 +107,7 @@ cat(sprintf("Control nCG density: median=%.1f CpGs/kb\n", median(ctrl_gr$nCG_den
 
 all_gr <- c(admr_gr, ctrl_gr)
 
-# ── 4. Annotate fragility features ───────────────────────────────────────────
+# 4. Annotate fragility features ===============================================
 message("Annotating segdup / LAD / B-compartment...")
 segdup_gr <- import(SEGDUP, format="BED"); seqlevelsStyle(segdup_gr) <- "UCSC"
 lad_gr    <- import(LAD,    format="BED"); seqlevelsStyle(lad_gr)    <- "UCSC"
@@ -125,7 +132,7 @@ df <- data.frame(
 )
 df$obs_weight <- ifelse(df$is_admr == 1L, 1, 1 / N_CTRL_MULT)
 
-# ── 5. Logistic GLMs: unadjusted vs CpG-adjusted ────────────────────────────
+# 5. Logistic GLMs: unadjusted vs CpG-adjusted =================================
 message("Fitting logistic GLMs...")
 
 fit_glm <- function(formula_str, data, label) {
@@ -164,12 +171,12 @@ res_all <- bind_rows(res_base, res_adj) |>
 cat("\n=== A1 GLM results ===\n")
 print(res_all |> select(model, feature_lab, OR, CI_lo, CI_hi, p, sig))
 
-# ── 6. Gold-only adjusted model ──────────────────────────────────────────────
+# 6. Gold-only adjusted model ==================================================
 df_gold_ctrl <- df_cc |> filter(is_admr == 0 | tier == "Gold")
 res_gold <- fit_glm("is_admr ~ segdup + log10_cpg + lad + b_compartment",
                     df_gold_ctrl, "CpG-adjusted (Gold only)")  # obs_weight used via closure
 
-# ── 7. Save results ───────────────────────────────────────────────────────────
+# 7. Save results ==============================================================
 out <- bind_rows(res_all, res_gold |>
   mutate(sig = cut(p, c(-Inf,0.001,0.01,0.05,Inf), labels=c("***","**","*","ns")),
          feature_lab = recode(feature,
@@ -179,7 +186,7 @@ out <- bind_rows(res_all, res_gold |>
 fwrite(out, file.path(OUT_DIR, "a1_cpg_adjusted_glm.csv"))
 message("Wrote: a1_cpg_adjusted_glm.csv")
 
-# ── 8. Figure: side-by-side forest ───────────────────────────────────────────
+# 8. Figure: side-by-side forest ===============================================
 feat_order <- c("SegDup overlap","log10(CpG density)","LAD overlap","B-compartment")
 
 plot_df <- out |>

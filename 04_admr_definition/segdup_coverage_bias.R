@@ -9,15 +9,21 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(rtracklayer)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-COV_DIR  <- "/node200data/kachungk/hcc_data/minimap2.out_hg38/coverage"
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+COV_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "minimap2.out_hg38/coverage")
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 OUT_CSV  <- file.path(OUT_DIR, "segdup_coverage_bias.csv")
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 
-# ── Load SegDup regions ────────────────────────────────────────────────────────
+# Load SegDup regions ==========================================================
 cat("Loading SegDup BED...\n")
 sd_gr <- import(SEGDUP, format = "BED")
 seqlevelsStyle(sd_gr) <- "UCSC"
@@ -26,7 +32,7 @@ sd_gr <- sd_gr[seqnames(sd_gr) %in% paste0("chr", 1:22)]
 cat(sprintf("  SegDup: %d intervals, %.1f Mb (autosomes)\n",
             length(sd_gr), sum(width(sd_gr)) / 1e6))
 
-# ── Helper: compute per-sample stats ──────────────────────────────────────────
+# Helper: compute per-sample stats =============================================
 process_sample <- function(bed_gz, label) {
   cat(sprintf("\nProcessing %s ...\n", label))
   dt <- fread(cmd = paste("zcat", bed_gz),
@@ -78,7 +84,7 @@ process_sample <- function(bed_gz, label) {
   )
 }
 
-# ── Enumerate tumor + normal samples ──────────────────────────────────────────
+# Enumerate tumor + normal samples =============================================
 bed_files <- list.files(COV_DIR, pattern = "\\.regions\\.bed\\.gz$", full.names = TRUE)
 bed_files <- bed_files[!grepl("\\.csi$", bed_files)]
 
@@ -88,7 +94,7 @@ results <- lapply(bed_files, function(f) {
 })
 res_dt <- rbindlist(results)
 
-# ── Summary across samples ────────────────────────────────────────────────────
+# Summary across samples =======================================================
 cat("\n\n=== SegDup Coverage Bias Summary ===\n")
 cat(sprintf("Samples analysed: %d\n", nrow(res_dt)))
 cat(sprintf("Median SegDup/GW coverage ratio: %.3f [%.3f, %.3f]\n",
@@ -106,11 +112,6 @@ print(res_dt[, .(median_ratio = round(median(sd_gw_ratio), 3),
                                         ", ", round(quantile(sd_gw_ratio, 0.75), 3), "]")),
              by = type])
 
-# ── Save ──────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 fwrite(res_dt, OUT_CSV)
 cat(sprintf("\nSaved: %s\n", OUT_CSV))
-
-# ── Log ───────────────────────────────────────────────────────────────────────
-cat(sprintf("[%s] segdup_coverage_bias: n=%d samples, median SegDup/GW ratio=%.3f\n",
-            Sys.Date(), nrow(res_dt), median(res_dt$sd_gw_ratio)),
-    file = LOG_FILE, append = TRUE)

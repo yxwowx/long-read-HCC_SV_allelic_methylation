@@ -9,7 +9,15 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
-OUTDIR <- "/node200data/kachungk/hcc_data/DMR_SVs/window_enrichment/nperm_1000"
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+OUTDIR <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/window_enrichment/nperm_1000")
 
 theme_hcc <- theme_classic(base_size = 12) +
   theme(
@@ -22,12 +30,12 @@ theme_hcc <- theme_classic(base_size = 12) +
 
 RUN_COLORS <- c("primary_50kb" = "#E24B4A", "primary_100kb" = "#3B8BD4")
 
-# ── 1. 파일 로드 및 합치기 ────────────────────────────────────────────────────
+# 1. Load and combine files ====================================================
 f50  <- file.path(OUTDIR, "primary_50kb_window_enrich_full.csv")
 f100 <- file.path(OUTDIR, "primary_100kb_window_enrich_full.csv")
 
-if (!file.exists(f50))  stop("파일 없음: ", f50)
-if (!file.exists(f100)) stop("파일 없음: ", f100)
+if (!file.exists(f50))  stop("File not found: ", f50)
+if (!file.exists(f100)) stop("File not found: ", f100)
 
 d50  <- fread(f50)  |> mutate(run_id = "primary_50kb",  primary_window_kb = 50)
 d100 <- fread(f100) |> mutate(run_id = "primary_100kb", primary_window_kb = 100)
@@ -37,9 +45,9 @@ combined <- bind_rows(d50, d100) |>
 
 out_csv <- file.path(OUTDIR, "combined_window_enrich.csv")
 fwrite(combined, out_csv, row.names = FALSE, quote = FALSE)
-cat("combined CSV 저장:", out_csv, "\n")
+cat("Combined CSV saved:", out_csv, "\n")
 
-# ── 2. 그래프 A: enrichment_ratio curve ──────────────────────────────────────
+# 2. Graph A: enrichment_ratio curve ===========================================
 
 CNV_ORDER <- c("copy_neutral", "copy_gaining", "copy_losing", "insertion", "COM")
 CNV_LABEL <- c(
@@ -82,7 +90,7 @@ p_A <- ggplot(plot_A_df,
   facet_wrap(~cnv_class, nrow = 1) +
   labs(
     title    = "Enrichment ratio curve: primary_50kb vs primary_100kb",
-    subtitle = "Mean ± SE across patients | 점선: ratio = 1",
+    subtitle = "Mean ± SE across patients | dashed line: ratio = 1",
     x        = "Window size (log scale)", y = "Enrichment ratio (obs / null)",
     caption  = "FDR: BH | n_perm = 1000"
   ) +
@@ -91,9 +99,9 @@ p_A <- ggplot(plot_A_df,
 
 out_A <- file.path(OUTDIR, "compare_50kb_vs_100kb_ratio.pdf")
 ggsave(out_A, p_A, width = 16, height = 5, device = cairo_pdf)
-cat("그래프 A 저장:", out_A, "\n")
+cat("Graph A saved:", out_A, "\n")
 
-# ── 3. 그래프 B: p_fdr 분포 (primary_window 행만) ────────────────────────────
+# 3. Graph B: p_fdr distribution (primary_window rows only) ====================
 
 plot_B_df <- combined |>
   filter(
@@ -124,20 +132,20 @@ p_B <- ggplot(plot_B_df,
                position = position_dodge(width = 0.5)) +
   scale_color_manual(values = RUN_COLORS, name = "Run") +
   labs(
-    title    = "p_fdr 분포: primary window 기준",
-    subtitle = "50kb run → window_kb=50, 100kb run → window_kb=100 행 사용 | 가로선: 중위값",
+    title    = "p_fdr distribution, at the primary window",
+    subtitle = "50kb run uses window_kb=50 rows, 100kb run uses window_kb=100 rows | horizontal line: median",
     x        = NULL, y = "-log10(FDR-adjusted p)",
-    caption  = "점선: -log10(0.05) | 각 점 = 환자 1명"
+    caption  = "Dashed line: -log10(0.05) | each point = one patient"
   ) +
   theme_hcc +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 
 out_B <- file.path(OUTDIR, "compare_50kb_vs_100kb_pvalue.pdf")
 ggsave(out_B, p_B, width = 10, height = 5, device = cairo_pdf)
-cat("그래프 B 저장:", out_B, "\n")
+cat("Graph B saved:", out_B, "\n")
 
-# ── 4. 유의한 케이스 비교 (p_fdr < 0.05) ──────────────────────────────────────
-cat("\n=== p_fdr < 0.05 유의 케이스 비교 (primary window 기준) ===\n\n")
+# 4. Compare significant cases (p_fdr < 0.05) ==================================
+cat("\n=== Comparing significant cases (p_fdr < 0.05), at the primary window ===\n\n")
 
 sig_cases <- combined |>
   filter(
@@ -154,16 +162,16 @@ sig_summary <- sig_cases |>
     .groups = "drop"
   )
 
-cat("── run별 유의 케이스 수 ──\n")
+cat("Significant case count by run:\n")
 print(as.data.frame(sig_summary))
 
-cat("\n── cnv_class × patient 상세 ──\n")
+cat("\nDetail by cnv_class x patient:\n")
 sig_detail <- sig_cases |>
   select(run_id, cnv_class, patient_id, window_kb, enrichment_ratio, p_fdr) |>
   arrange(run_id, cnv_class, patient_id)
 print(as.data.frame(sig_detail))
 
-# 두 run 공통 vs 고유 케이스
+# Cases shared between both runs vs unique to one run
 key50  <- sig_cases |> filter(run_id == "primary_50kb") |>
             mutate(key = paste(cnv_class, patient_id, sep = ":")) |>
             pull(key)
@@ -171,27 +179,27 @@ key100 <- sig_cases |> filter(run_id == "primary_100kb") |>
             mutate(key = paste(cnv_class, patient_id, sep = ":")) |>
             pull(key)
 
-cat("\n── 비교 요약 ──\n")
-cat(sprintf("primary_50kb  유의: %d개\n", length(key50)))
-cat(sprintf("primary_100kb 유의: %d개\n", length(key100)))
-cat(sprintf("공통 (두 run 모두): %d개  — %s\n",
+cat("\nComparison summary:\n")
+cat(sprintf("primary_50kb  significant: %d\n", length(key50)))
+cat(sprintf("primary_100kb significant: %d\n", length(key100)))
+cat(sprintf("Shared (both runs): %d  — %s\n",
             length(intersect(key50, key100)),
             if (length(intersect(key50, key100)) > 0)
               paste(intersect(key50, key100), collapse = ", ")
-            else "없음"))
-cat(sprintf("primary_50kb 단독:  %d개  — %s\n",
+            else "none"))
+cat(sprintf("primary_50kb only:  %d  — %s\n",
             length(setdiff(key50, key100)),
             if (length(setdiff(key50, key100)) > 0)
               paste(setdiff(key50, key100), collapse = ", ")
-            else "없음"))
-cat(sprintf("primary_100kb 단독: %d개  — %s\n",
+            else "none"))
+cat(sprintf("primary_100kb only: %d  — %s\n",
             length(setdiff(key100, key50)),
             if (length(setdiff(key100, key50)) > 0)
               paste(setdiff(key100, key50), collapse = ", ")
-            else "없음"))
+            else "none"))
 
 winner <- if (length(key50) > length(key100)) "primary_50kb" else
-          if (length(key100) > length(key50)) "primary_100kb" else "동일"
-cat(sprintf("\n→ 유의 케이스가 더 많은 run: %s\n", winner))
+          if (length(key100) > length(key50)) "primary_100kb" else "tied"
+cat(sprintf("\nRun with more significant cases: %s\n", winner))
 
-cat("\n=== 완료 ===\n")
+cat("\n=== Done ===\n")

@@ -11,17 +11,23 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(gridExtra)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-GOLD_CSV <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SEGDUP   <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-OUT_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
-FIG_DIR  <- "/node200data/kachungk/hcc_data/DMR_SVs/result/figures"
-LOG_FILE <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+# Paths ========================================================================
+GOLD_CSV <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SEGDUP   <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+OUT_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
+FIG_DIR  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/figures")
 
 dir.create(FIG_DIR, showWarnings = FALSE, recursive = TRUE)
 
-# ── Load data ──────────────────────────────────────────────────────────────────
+# Load data ====================================================================
 cat("Loading Gold aDMR loci...\n")
 gold <- fread(GOLD_CSV)
 
@@ -37,7 +43,7 @@ loci[, cpg_density := nCG / locus_width * 1000]  # CpGs per kb
 
 cat(sprintf("Unique Gold aDMR loci: %d\n", nrow(loci)))
 
-# ── SegDup annotation ──────────────────────────────────────────────────────────
+# SegDup annotation ============================================================
 cat("Annotating SegDup overlap...\n")
 sd_gr <- import(SEGDUP, format = "BED")
 seqlevelsStyle(sd_gr) <- "UCSC"
@@ -54,7 +60,7 @@ n_sd  <- sum(loci$segdup == "SegDup")
 n_nsd <- sum(loci$segdup == "non-SegDup")
 cat(sprintf("SegDup-overlapping: %d | non-SegDup: %d\n", n_sd, n_nsd))
 
-# ── Wilcoxon tests ─────────────────────────────────────────────────────────────
+# Wilcoxon tests ===============================================================
 run_wilcox <- function(var, label) {
   x <- loci[segdup == "SegDup",     get(var)]
   y <- loci[segdup == "non-SegDup", get(var)]
@@ -71,7 +77,7 @@ cat("\n=== P1-B: SegDup vs non-SegDup Gold aDMR ===")
 res_ncg  <- run_wilcox("cpg_density",  "CpG density (CpGs/kb)")
 res_meth <- run_wilcox("hp_abs_diff",  "|HP Δβ| (allelic methylation variability)")
 
-# ── Theme ──────────────────────────────────────────────────────────────────────
+# Theme ========================================================================
 COL_SD  <- "#C0392B"
 COL_NSD <- "#7F8C8D"
 theme_hcc <- theme_classic(base_size = 11) +
@@ -83,7 +89,7 @@ fmt_p <- function(p) {
   if (p < 0.001) "p<0.001" else sprintf("p=%.3f", p)
 }
 
-# ── Panel A: CpG density ───────────────────────────────────────────────────────
+# Panel A: CpG density =========================================================
 pA <- ggplot(loci, aes(x = segdup, y = cpg_density, fill = segdup)) +
   geom_boxplot(width = 0.5, outlier.size = 1.2, outlier.alpha = 0.5) +
   geom_jitter(width = 0.12, size = 1, alpha = 0.4) +
@@ -96,7 +102,7 @@ pA <- ggplot(loci, aes(x = segdup, y = cpg_density, fill = segdup)) +
        x = NULL, y = "CpGs per kb") +
   theme_hcc + theme(legend.position = "none")
 
-# ── Panel B: |HP Δβ| ──────────────────────────────────────────────────────────
+# Panel B: |HP delta-beta| =====================================================
 pB <- ggplot(loci, aes(x = segdup, y = hp_abs_diff, fill = segdup)) +
   geom_boxplot(width = 0.5, outlier.size = 1.2, outlier.alpha = 0.5) +
   geom_jitter(width = 0.12, size = 1, alpha = 0.4) +
@@ -109,13 +115,13 @@ pB <- ggplot(loci, aes(x = segdup, y = hp_abs_diff, fill = segdup)) +
        x = NULL, y = "|HP1 - HP2| (median across patients)") +
   theme_hcc + theme(legend.position = "none")
 
-# ── Save ───────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 fig_path <- file.path(FIG_DIR, "fig_p1b_segdup_admr_cpg_variability.png")
 fig <- arrangeGrob(pA, pB, ncol = 2)
 ggsave(fig_path, fig, width = 9, height = 5, dpi = 300)
 cat(sprintf("\nSaved: %s\n", fig_path))
 
-# ── CSV summary ────────────────────────────────────────────────────────────────
+# CSV summary ==================================================================
 out <- data.table(
   metric    = c("CpG density (CpGs/kb)", "|HP abs_diff|"),
   n_segdup  = c(res_ncg$n_sd,   res_meth$n_sd),
@@ -128,8 +134,3 @@ out <- data.table(
 )
 fwrite(out, file.path(OUT_DIR, "p1b_segdup_admr_cpg_variability.csv"))
 cat("Summary:\n"); print(out)
-
-# ── Log ────────────────────────────────────────────────────────────────────────
-cat(sprintf("[%s] P1-B segdup_admr_cpg_variability: n_sd=%d n_nsd=%d | CpG density p=%.4g | |HP Δβ| p=%.4g\n",
-            Sys.Date(), n_sd, n_nsd, res_ncg$p, res_meth$p),
-    file = LOG_FILE, append = TRUE)

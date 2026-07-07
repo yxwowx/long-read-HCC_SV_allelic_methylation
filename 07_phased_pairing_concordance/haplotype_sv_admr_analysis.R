@@ -24,33 +24,37 @@ suppressPackageStartupMessages({
   library(dunn.test)    # dunn.test post-hoc
   library(lme4)         # lmer
 })
-source(file.path(dirname(normalizePath(
-  sub("--file=", "", grep("--file=", commandArgs(FALSE), value = TRUE)[1])
-)), "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 option_list <- list(
   make_option("--sv_strat_file", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.csv.gz",
+              default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/sv_tad_ctcf_annotation.csv.gz"),
               metavar = "FILE",
               help = "Pre-stratified SV file from sv_stratification.R. Required for tier-stratified analyses."),
   make_option("--input_dmr", type = "character",
-               default = "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz", #nolint
+               default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"), #nolint
               metavar = "FILE",
               help = "Input DMR file with phased beta values (output from dmr_recurrence_analysis.R)."),
   make_option("--ctcf_bed", type = "character",
-              default = "/node200data/kachungk/reference/GRCh38/ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz",
+              default = file.path(Sys.getenv("REFERENCE_DIR"), "ensembl/HepG2_ChIP_optpeaks_ENCFF543WTP.bed.gz"),
               metavar = "FILE",
               help = "CTCF peak BED (narrowPeak; no header)."),
   make_option("--enhancer_bed", type = "character",
-              default = "/node200data/kachungk/reference/GRCh38/genomic_element/hg38_genehancer_enhancer.bed",
+              default = file.path(Sys.getenv("REFERENCE_DIR"), "genomic_element/hg38_genehancer_enhancer.bed"),
               metavar = "FILE",
               help = "Enhancer BED (header row: CHROMOSOME,START,END,ELEMENT,SEGMENT)."),
   make_option("--promoter_bed", type = "character",
-              default = "/node200data/kachungk/reference/GRCh38/genomic_element/hg38_genes_promoters.bed",
+              default = file.path(Sys.getenv("REFERENCE_DIR"), "genomic_element/hg38_genes_promoters.bed"),
               metavar = "FILE",
               help = "Promoter BED (header row: CHROMOSOME,START,END,SEGMENT,ELEMENT)."),
   make_option("--outdir", type = "character",
-              default = "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis",
+              default = file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/03.haplotype_sv_admr_analysis"),
               metavar = "DIR",
               help = "Output directory for results and figures."),
   make_option("--stratify_by", type = "character", default = "tier",
@@ -69,8 +73,8 @@ N_PERM_BLOCK <- 500L   # block-label permutation (Layer 1)
 N_PERM_JT    <- 2000L  # Jonckheere-Terpstra permutation
 
 
-# 1. Data loading =============================================================
-setwd("/node200data/kachungk/hcc_data/DMR_SVs")
+# 1. Data loading ==============================================================
+setwd(file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs"))
 phase_gtfs <- list.files(
   "../hg38+HBV/clairS/phased_vcf",
   pattern = "*.gtf$", full.names = TRUE
@@ -191,7 +195,7 @@ admr_phased <- fread(opt$input_dmr) %>%
   ) %>%
   split(mcols(.)$sample)
 
-## 1-1. Add block_id to admr_phased via overlap with phase_blocks ===============
+# 1-1. Add block_id to admr_phased via overlap with phase_blocks ===============
 message("Preprocess aDMR dataset")
 admr_phased <- lapply(names(admr_phased), function(pt) {
   dmr_gr <- admr_phased[[pt]]
@@ -218,7 +222,7 @@ if (!has_tier) {
   )
 }
 
-# Helper functions ============================================================
+# Helper functions =============================================================
 
 #' Infer SV-bearing haplotype per phase block
 #'
@@ -313,7 +317,7 @@ aic_tier <- NA_real_
 aic_dist <- NA_real_
 
 
-# 2. Layer 1 — Tier-stratified phase block co-localization ===================
+# 2. Layer 1 — Tier-stratified phase block co-localization =====================
 #    Width-corrected aDMR density; block-label permutation (n=500) + Wilcoxon;
 #    Jonckheere-Terpstra across tier hierarchy
 
@@ -565,7 +569,7 @@ if (!has_tier) {
 } # end if has_tier Layer 2
 
 
-# 4. Layer 3 — CRE overlap fraction by sv_tier ================================
+# 4. Layer 3 — CRE overlap fraction by sv_tier =================================
 #    % aDMRs in SV blocks overlapping promoter / CTCF / enhancer
 #    Wilcoxon (TAD_CTCF vs non_boundary) + JT across all tiers
 
@@ -715,7 +719,7 @@ if (!is.null(layer3_results) && nrow(layer3_results) > 0) {
 
 } # end if has_tier Layer 3
 
-# 5. Layer 4 — Tier effect size gradient + LME model comparison ===============
+# 5. Layer 4 — Tier effect size gradient + LME model comparison ================
 #    m_tier: hp_abs_diff ~ sv_tier + (1|patient_id)
 #    m_dist: hp_abs_diff ~ log10(nearest_bp_dist + 1) + (1|patient_id)
 #    Compare AIC; visualise median_abs_delta ± IQR by tier
@@ -899,11 +903,9 @@ if (has_tier) {
   }
 }
 
-# =============================================================================
-# 5c. Methylation-competent SV classification
-#     An SV is "methylation-competent" if ≥1 aDMR falls in the same phase block.
-#     Logistic mixed model identifies which SV features predict competence.
-# =============================================================================
+# 5c. Methylation-competent SV classification ==================================
+#   An SV is "methylation-competent" if >=1 aDMR falls in the same phase block.
+#   Logistic mixed model identifies which SV features predict competence.
 
 cat("\n=== Section 5c: Methylation-competent SV classification ===\n")
 
@@ -970,11 +972,9 @@ if (has_tier) {
 }
 
 
-# =============================================================================
-# 5d. Distance-bin × SV biology (CN_changing vs balanced) interaction
-#     Bins: proximal (0–10 kb), near (10–50 kb), far (50–500 kb), distal (>500 kb)
-#     Tests whether the distance-decay slope differs by SV biology class.
-# =============================================================================
+# 5d. Distance-bin x SV biology (CN_changing vs balanced) interaction ==========
+#   Bins: proximal (0-10 kb), near (10-50 kb), far (50-500 kb), distal (>500 kb)
+#   Tests whether the distance-decay slope differs by SV biology class.
 
 cat("\n=== Section 5d: Distance-bin × SV biology interaction ===\n")
 
@@ -1064,11 +1064,9 @@ if (has_tier) {
 }
 
 
-# =============================================================================
-# 5e. Signed Δβ direction: are SVs preferentially hyper- or hypo-methylating?
-#     Stratified by SV type (DEL/DUP/INV/TRA/INS).
-#     Expected (dosage model): DEL → SV-HP hypermethylation (>50%); DUP → variable.
-# =============================================================================
+# 5e. Signed Δβ direction, stratified by SV type (DEL/DUP/INV/TRA/INS) =========
+#   Tests whether SV-HP methylation is preferentially higher or lower than WT-HP.
+#   Dosage-model expectation: DEL associated with SV-HP hypermethylation (>50%); DUP variable.
 
 cat("\n=== Section 5e: Signed Δβ direction by SV type ===\n")
 
@@ -1140,12 +1138,10 @@ if (has_tier) {
 }
 
 
-# =============================================================================
-# 5f. Revised Layer 2: 2D collapsed tier (sv_arch × sv_bio)
-#     Tests whether boundary disruption adds explanatory power *within* each
-#     SV biology class (CN_changing or balanced).
-#     Key comparison: boundary_CN_changing vs non_boundary_CN_changing.
-# =============================================================================
+# 5f. Revised Layer 2: 2D collapsed tier (sv_arch x sv_bio) ====================
+#   Tests whether boundary disruption adds explanatory power *within* each
+#   SV biology class (CN_changing or balanced).
+#   Key comparison: boundary_CN_changing vs non_boundary_CN_changing.
 
 cat("\n=== Section 5f: Revised Layer 2 — 2D collapsed tier (arch × sv_bio) ===\n")
 
@@ -1227,7 +1223,7 @@ if (has_tier) {
 
 # --- Visualization: Sections 5c–5f -------------------------------------------
 
-## Fig 5c: % methylation-competent SVs by tier (bar chart)
+# Fig 5c: % methylation-competent SVs by tier (bar chart) ======================
 if (nrow(sv_competence_summ) > 0) {
   p5c_df <- sv_competence_summ %>%
     mutate(sv_tier = factor(sv_tier, levels = SV_TIER_LEVELS))
@@ -1253,7 +1249,7 @@ if (nrow(sv_competence_summ) > 0) {
   saveRDS(p5c, file.path(opt$outdir, "fig5c_meth_competent_by_tier.rds"))
 }
 
-## Fig 5d: Distance-decay × SV biology (line + ribbon)
+# Fig 5d: Distance-decay x SV biology (line + ribbon) ==========================
 if (nrow(dist_bin_summ) > 0) {
   p5d <- ggplot(dist_bin_summ,
                 aes(x = dist_bin, y = median_abs_diff,
@@ -1277,7 +1273,7 @@ if (nrow(dist_bin_summ) > 0) {
   saveRDS(p5d, file.path(opt$outdir, "fig5d_dist_decay_by_svbio.rds"))
 }
 
-## Fig 5e: Signed Δβ direction by SV type (lollipop / diverging bar vs 50%)
+# Fig 5e: Signed Δβ direction by SV type (lollipop / diverging bar vs 50%) =====
 if (nrow(dir_svtype_summ) > 0) {
   p5e_df <- dir_svtype_summ %>%
     filter(!is.na(pooled_pct_hyper)) %>%
@@ -1307,7 +1303,7 @@ if (nrow(dir_svtype_summ) > 0) {
   saveRDS(p5e, file.path(opt$outdir, "fig5e_direction_by_svtype.rds"))
 }
 
-## Fig 5f: 2D tier violin (arch × sv_bio)
+# Fig 5f: 2D tier violin (arch x sv_bio) =======================================
 if (nrow(arch_bio_hp_df) > 0) {
   p5f <- ggplot(arch_bio_hp_df,
                 aes(x = arch_bio, y = hp_abs_diff, fill = arch_bio)) +
@@ -1332,8 +1328,8 @@ if (nrow(arch_bio_hp_df) > 0) {
 }
 
 
-# Visualization ===============================================================
-## 1. Figure 1 — Layer 1: enrichment_ratio by tier (bar + JT p-value) =========
+# Visualization ================================================================
+# 1. Figure 1 — Layer 1: enrichment_ratio by tier (bar + JT p-value) ===========
 if (has_tier && nrow(layer1_results) > 0) {
   tier_summ_l1 <- layer1_results %>%
     group_by(sv_tier) %>%
@@ -1372,7 +1368,7 @@ if (has_tier && nrow(layer1_results) > 0) {
          p1, width = 9, height = 5.5, device = png, dpi = 300)
 }
 
-## 2. Figure 2 — Layer 2: hp_abs_diff by tier (violin + boxplot) ===============
+# 2. Figure 2 — Layer 2: hp_abs_diff by tier (violin + boxplot) ================
 
 if (has_tier && nrow(all_hp_df) > 0) {
   p2 <- ggplot(all_hp_df, aes(x = sv_tier, y = hp_abs_diff, fill = sv_tier)) +
@@ -1401,7 +1397,7 @@ if (has_tier && nrow(all_hp_df) > 0) {
          p2, width = 9, height = 5.5, device = png, dpi = 300)
 }
 
-## 3. Figure 3 — Layer 3: CRE overlap % by tier (grouped bar) ================
+# 3. Figure 3 — Layer 3: CRE overlap % by tier (grouped bar) ===================
 if (has_tier && nrow(layer3_results) > 0) {
   cre_long <- layer3_results %>%
     group_by(sv_tier) %>%
@@ -1439,7 +1435,7 @@ if (has_tier && nrow(layer3_results) > 0) {
          p3, width = 9, height = 5.5, device = png, dpi = 300)
 }
 
-## 4. Figure 4 — Layer 4: tier gradient point + errorbar; AIC annotation ======
+# 4. Figure 4 — Layer 4: tier gradient point + errorbar; AIC annotation ========
 if (has_tier && nrow(layer4_gradient) > 0) {
   delta_aic <- if (!is.na(aic_tier) && !is.na(aic_dist)) round(aic_dist - aic_tier, 1) else NA_real_
   aic_subtitle <- if (!is.na(delta_aic)) {
@@ -1467,10 +1463,10 @@ if (has_tier && nrow(layer4_gradient) > 0) {
          p4, width = 8, height = 5, device = png, dpi = 300)
 }
 
-## 5. Sup1 — SV-admr distance distribution  =======================
+# 5. Sup1 — SV-admr distance distribution ======================================
 # Distance distribution: aDMR midpoint → nearest SV breakpoint
 
-### A. Per-patient nearest-SV-bp distance for every aDMR ===========
+# A. Per-patient nearest-SV-bp distance for every aDMR =========================
 # For each aDMR, find: (a) nearest ANY SV bp, (b) nearest SV bp per tier
 # (c) nearest SV bp per type.
 # Compute (a) globally and record the tier/type of the nearest SV.
@@ -1538,7 +1534,7 @@ print(dist_df %>%
   ) %>%
   arrange(median_bp))
 
-### distance vs |HP Δβ| Spearman correlation ==================
+# distance vs |HP Δβ| Spearman correlation =====================================
 rho_all <- cor(log10(dist_df$dist_bp + 1), dist_df$hp_delta,
                method = "spearman", use = "complete.obs")
 cat(sprintf("\nSpearman ρ (log10 dist, |HP Δβ|) all aDMRs: %.4f\n", rho_all))
@@ -1570,7 +1566,7 @@ print(type_rho)
 dist_plot <- dist_df %>%
   mutate(log10_dist = log10(dist_bp + 1))
 
-### 5a. Global density on log10 scale ============================
+# 5a. Global density on log10 scale ============================================
 p_global <- ggplot(dist_plot, aes(x = log10_dist)) +
   geom_histogram(aes(y = after_stat(density)),
                  bins = 80, fill = "#3B8BD4", alpha = 0.7, color = NA) +
@@ -1598,7 +1594,7 @@ p_global <- ggplot(dist_plot, aes(x = log10_dist)) +
   ) +
   theme_hcc
 
-### 5b. Density by SV tier (facet) =========================
+# 5b. Density by SV tier (facet) ===============================================
 tier_levels_present <- intersect(SV_TIER_LEVELS, unique(dist_plot$nearest_tier))
 p_tier <- dist_plot %>%
   filter(nearest_tier %in% tier_levels_present) %>%
@@ -1621,7 +1617,7 @@ p_tier <- dist_plot %>%
   ) +
   theme_hcc
 
-### 5c. Density by SV type (facet) ========================
+# 5c. Density by SV type (facet) ===============================================
 type_levels_present <- intersect(SV_TYPE_LEVELS, unique(dist_plot$nearest_type))
 p_type <- dist_plot %>%
   filter(nearest_type %in% type_levels_present) %>%
@@ -1644,7 +1640,7 @@ p_type <- dist_plot %>%
   ) +
   theme_hcc
 
-### 5d. Scatter: log10 dist vs |HP Δβ|  =================
+# 5d. Scatter: log10 dist vs |HP Δβ| ===========================================
 # coloured by SV tier, hexbin + loess
 p_scatter_tier <- dist_plot %>%
   filter(!is.na(nearest_tier), nearest_tier %in% tier_levels_present) %>%
@@ -1664,7 +1660,7 @@ p_scatter_tier <- dist_plot %>%
   ) +
   theme_hcc
 
-### 5e. Scatter by SV type =============================
+# 5e. Scatter by SV type =======================================================
 p_scatter_type <- dist_plot %>%
   filter(!is.na(nearest_type), nearest_type %in% type_levels_present) %>%
   mutate(nearest_type = factor(nearest_type, levels = type_levels_present)) %>%
@@ -1683,7 +1679,7 @@ p_scatter_type <- dist_plot %>%
   ) +
   theme_hcc
 
-### 5f. ECDF plot =======================================
+# 5f. ECDF plot ================================================================
 # cumulative % of aDMRs within each distance threshold
 ecdf_tiers <- dist_plot %>%
   filter(!is.na(nearest_tier), nearest_tier %in% tier_levels_present) %>%
@@ -1726,7 +1722,7 @@ fwrite(dist_df, file.path(opt$outdir, "sv_admr_distance_per_admr.csv.gz"))
 rm(dist_df, dist_plot, p_global, p_tier, p_type, p_scatter_tier, p_scatter_type, p_ecdf, decay_combined, combined)
 gc()
 
-## 6. Sup2 — SV-admr distance distribution  =======================
+# 6. Sup2 — SV-admr distance distribution (within phase block) =================
 # Distance distribution within phase block
 
 message("Computing within-block aDMR → nearest SV bp distances …")
@@ -1830,7 +1826,7 @@ if (!is.null(block_dist_df) && nrow(block_dist_df) > 0L) {
 }
 
 
-# 10. Evidence summary + output files ========================================
+# 10. Evidence summary + output files ==========================================
 
 cat("\n=== Evidence summary ===\n")
 
@@ -1917,9 +1913,7 @@ if (has_tier) {
 cat("  evidence_summary.csv\n")
 rm()
 gc()
-# =============================================================================
-# Methods language
-# =============================================================================
+# Methods language =============================================================
 # SV functional annotation (sv_tier) was used as the primary stratification axis.
 # Each SV was assigned to one of five tiers based on overlap with HepG2 Micro-C
 # TAD boundaries and ENCODE CTCF peaks (ENCFF543WTP), ordered by expected

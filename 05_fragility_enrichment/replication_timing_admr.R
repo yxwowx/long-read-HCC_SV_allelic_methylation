@@ -23,21 +23,27 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(matrixStats)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-BASE       <- "/node200data/kachungk/hcc_data/DMR_SVs"
-REPLISEQ_DIR <- "/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache/repliseq"
-PC1_BW     <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-CHAIN_FILE <- "/home/kachungk/programs/UCSC_utility/liftover/hg19ToHg38.over.chain"
+# Paths ========================================================================
+BASE       <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
+REPLISEQ_DIR <- file.path(BASE, "external_validation_cache/repliseq")
+PC1_BW     <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+CHAIN_FILE <- Sys.getenv("LIFTOVER_CHAIN")
 GOLD_CSV   <- file.path(BASE, "04.final_candidate/gold_tier_final.csv")
 SILVER_CSV <- file.path(BASE, "04.final_candidate/silver_tier.csv")
 SV_ANN     <- file.path(BASE, "result/sv_fragility_annotation.csv")
 METH_CACHE <- file.path(BASE, "external_validation_cache/LIHC_meth450.rds")
 OUT_DIR    <- file.path(BASE, "result")
 FIG_DIR    <- file.path(OUT_DIR, "figures")
-LOG_FILE   <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 PHASE_FILES <- list(
@@ -60,7 +66,7 @@ sig_label <- function(p) {
   dplyr::case_when(p < 0.001 ~ "***", p < 0.01 ~ "**", p < 0.05 ~ "*", TRUE ~ "ns")
 }
 
-# ── 1. Load query loci ────────────────────────────────────────────────────────
+# 1. Load query loci ===========================================================
 message("=== Section 1: Loading query loci ===")
 
 load_admr_gr <- function(csv, tier_name) {
@@ -102,7 +108,7 @@ cat(sprintf("Random background windows: %d\n", length(rand_gr)))
 all_query <- c(gold_gr, silver_gr, sv_gr[, "tier"], rand_gr)
 seqlevelsStyle(all_query) <- "UCSC"
 
-# ── 2. Extract PC1 scores ─────────────────────────────────────────────────────
+# 2. Extract PC1 scores ========================================================
 message("\n=== Section 2: Extracting PC1 scores ===")
 
 extract_bw_mean <- function(query_gr, bw_path) {
@@ -122,7 +128,7 @@ all_query$pc1 <- extract_bw_mean(all_query, PC1_BW)
 cat(sprintf("PC1 extraction done. NAs: %d / %d\n",
             sum(is.na(all_query$pc1)), length(all_query)))
 
-# ── 3. Load & liftOver ENCODE Repli-seq (hg19 → hg38) ────────────────────────
+# 3. Load & liftOver ENCODE Repli-seq (hg19 -> hg38) ===========================
 message("\n=== Section 3: Loading Repli-seq bigWigs and lifting to hg38 ===")
 
 chain <- import.chain(CHAIN_FILE)
@@ -144,7 +150,7 @@ load_phase_hg38 <- function(bw_path, phase_name) {
 phase_gr <- lapply(names(PHASE_FILES), function(p) load_phase_hg38(PHASE_FILES[[p]], p))
 names(phase_gr) <- names(PHASE_FILES)
 
-# ── 4. Extract Repli-seq RT score at query loci ───────────────────────────────
+# 4. Extract Repli-seq RT score at query loci ==================================
 message("\n=== Section 4: Extracting Repli-seq scores at query loci ===")
 
 score_at_loci <- function(query_gr, phase_gr_list) {
@@ -190,7 +196,7 @@ loci_df <- data.frame(
 
 cat(sprintf("Summary table: %d loci\n", nrow(loci_df)))
 
-# ── 5. Group-level comparisons ────────────────────────────────────────────────
+# 5. Group-level comparisons ===================================================
 message("\n=== Section 5: Group-level comparisons ===")
 
 rand_pc1 <- loci_df$pc1[loci_df$tier == "Random"]
@@ -228,7 +234,7 @@ message("Saved: replication_timing_group.csv")
 cat("\n=== Group-Level Results ===\n")
 print(stat_table)
 
-# ── Violin: PC1 by group ──────────────────────────────────────────────────────
+# Violin: PC1 by group =========================================================
 tier_colors <- c("Gold aDMR" = "#E24B4A", "Silver aDMR" = "#E07B39",
                  "SV breakpoint" = "#4A90D9", "Random" = "#888780")
 
@@ -252,7 +258,7 @@ ggsave(file.path(FIG_DIR, "fig_b2a_pc1_violin.png"),
        p_pc1_violin, width = 7, height = 5, dpi = 150)
 message("Saved: fig_b2a_pc1_violin.png")
 
-# ── Violin: Repli-seq RT score by group ──────────────────────────────────────
+# Violin: Repli-seq RT score by group ==========================================
 p_rt_violin <- ggplot(
     loci_df |> filter(!is.na(rt_score)),
     aes(x = tier, y = rt_score, fill = tier)
@@ -281,7 +287,7 @@ ggsave(file.path(FIG_DIR, "fig_b2b_rt_repliseq_violin.png"),
        p_rt_violin, width = 7, height = 5, dpi = 150)
 message("Saved: fig_b2b_rt_repliseq_violin.png")
 
-# ── 6. PC1 vs Repli-seq concordance ──────────────────────────────────────────
+# 6. PC1 vs Repli-seq concordance ==============================================
 message("\n=== Section 6: PC1 vs Repli-seq concordance ===")
 
 concordance_df <- loci_df |> filter(!is.na(pc1) & !is.na(rt_score))
@@ -319,7 +325,7 @@ ggsave(file.path(FIG_DIR, "fig_b2c_pc1_repliseq_concordance.png"),
        p_concordance, width = 7, height = 5, dpi = 150)
 message("Saved: fig_b2c_pc1_repliseq_concordance.png")
 
-# ── 7. B2 probe-level interaction model ──────────────────────────────────────
+# 7. B2 probe-level interaction model ==========================================
 message("\n=== Section 7: B2 probe-level interaction (beta_SD ~ RT × is_admr) ===")
 
 message("Loading TCGA 450K methylation SE...")
@@ -423,7 +429,7 @@ cat(sprintf("\nInteraction pc1:is_admr — β=%.4f, p=%.3g\n",
 cat(sprintf("Interaction rt_score:is_admr — β=%.4f, p=%.3g\n",
             int_rt["Estimate"], int_rt["Pr(>|t|)"]))
 
-# ── Interaction figure ────────────────────────────────────────────────────────
+# Interaction figure ===========================================================
 # Binned plot showing the interaction: RT bin × is_admr vs mean log10(beta_SD)
 probe_clean$rt_bin  <- cut(probe_clean$rt_score, breaks = 5, labels = FALSE)
 probe_clean$pc1_bin <- cut(probe_clean$pc1,      breaks = 5, labels = FALSE)
@@ -489,7 +495,7 @@ ggsave(file.path(FIG_DIR, "fig_b2e_interaction_rt.png"),
        p_interaction_rt,  width = 7, height = 5, dpi = 150)
 message("Saved: fig_b2d_interaction_pc1.png + fig_b2e_interaction_rt.png")
 
-# ── 8. Final comparison summary ───────────────────────────────────────────────
+# 8. Final comparison summary ==================================================
 message("\n=== Section 8: Final comparison summary ===")
 
 comparison_df <- data.frame(
@@ -509,16 +515,6 @@ message("Saved: replication_timing_comparison.csv")
 
 cat("\n=== COMPARISON: PC1 vs Repli-seq ===\n")
 print(comparison_df)
-
-# ── Log ───────────────────────────────────────────────────────────────────────
-cat(
-  sprintf("[%s] replication_timing_admr: Spearman PC1~RT rho=%.3f; int_pc1 β=%.4f p=%s; int_rt β=%.4f p=%s\n",
-          Sys.Date(),
-          cor_all$estimate,
-          int_pc1_coef["Estimate"], sig_label(int_pc1_coef["Pr(>|t|)"]),
-          int_rt["Estimate"],       sig_label(int_rt["Pr(>|t|)"])),
-  file = LOG_FILE, append = TRUE
-)
 
 message("\nDone. Output files:")
 message("  result/replication_timing_group.csv")

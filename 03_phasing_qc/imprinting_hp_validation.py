@@ -13,22 +13,24 @@ Run: mamba run -n hifiasm python post_processing/imprinting_hp_validation.py
 import os
 import sys
 import random
-import datetime
 import numpy as np
 import pandas as pd
 from multiprocessing import Pool
+from pathlib import Path
 from scipy import stats
 
 import pysam
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-HAP_DIR     = "/node200data/kachungk/hcc_data/DMR_minimap2.out_hg38/cpg_sites"
-MAPPING_CSV = os.path.expanduser("~/patient_code_mapping.csv")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared.paths import HCC_DATA_DIR, PATIENT_CODE_MAP  # noqa: E402
+
+# Paths ==========
+HAP_DIR     = str(HCC_DATA_DIR / "DMR_minimap2.out_hg38/cpg_sites")
+MAPPING_CSV = str(PATIENT_CODE_MAP)
 ICR_BED     = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "data/imprinted_dmrs_hg38.bed")
-OUT_DIR     = "/node200data/kachungk/hcc_data/DMR_SVs/result"
-FIG_DIR     = "/node200data/kachungk/hcc_data/DMR_SVs/figs/v2"
-LOG_FILE    = "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
+OUT_DIR     = str(HCC_DATA_DIR / "DMR_SVs/result")
+FIG_DIR     = str(HCC_DATA_DIR / "DMR_SVs/figs/v2")
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(FIG_DIR, exist_ok=True)
@@ -109,7 +111,7 @@ def process_patient(args):
     tbx1 = pysam.TabixFile(hap1_path)
     tbx2 = pysam.TabixFile(hap2_path)
 
-    # ── ICR loci ──
+    # ICR loci
     icr_rows = []
     for chrom, start, end, name_locus, parent in icr_loci:
         b1, n1 = fetch_beta(tbx1, chrom, start, end)
@@ -130,7 +132,7 @@ def process_patient(args):
             "n_cpg_hap2":   n2,
         })
 
-    # ── Background ──
+    # Background
     bg_deltas = []
     for chrom, start, end in bg_regions:
         b1, _ = fetch_beta(tbx1, chrom, start, end)
@@ -211,7 +213,7 @@ if __name__ == "__main__":
     )
     print(f"\n{n_concordant}/{len(summary_df)} patients: ICR median |Δ| > 2× background")
 
-    # ── Figure ────────────────────────────────────────────────────────────────
+    # Figure ==========
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -259,14 +261,5 @@ if __name__ == "__main__":
         print(f"\nSaved figure: {fig_path}")
     except Exception as e:
         print(f"Figure generation skipped: {e}")
-
-    # ── Log ───────────────────────────────────────────────────────────────────
-    med_icr = float(np.median(summary_df["median_icr_delta"]))
-    with open(LOG_FILE, "a") as fh:
-        fh.write(
-            f"[{datetime.date.today()}] imprinting_hp_validation.py (A-II): "
-            f"{len(summary_df)} patients; median ICR |Δβ|={med_icr:.3f}; "
-            f"{n_concordant}/{len(summary_df)} patients ICR>2×bg\n"
-        )
 
     print("Done.")

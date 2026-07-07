@@ -23,13 +23,20 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-OUTDIR    <- "/node200data/kachungk/hcc_data/DMR_SVs"
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
+
+OUTDIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs")
 ENRICH_CSV <- file.path(OUTDIR, "02.sv_dmr_enrichment/tier_50kb_v2_window_enrich_full.csv")
 DIST_CSV   <- file.path(OUTDIR, "03.haplotype_sv_admr_analysis/sv_admr_distance_per_admr.csv.gz")
 ENRICH_OUT <- file.path(OUTDIR, "02.sv_dmr_enrichment")
 FIG_PNG    <- file.path(OUTDIR, "figs/png/fig_trans_neg_ctrl.png")
 FIG_PDF    <- file.path(OUTDIR, "figs/panels/fig_trans_neg_ctrl.pdf")
-DEC_LOG    <- "/home/kachungk/script/SV-DMR/remodeled_constitutional_AMR/logs/claude_decisions.log"
 
 dir.create(file.path(OUTDIR, "figs/png"),    showWarnings = FALSE, recursive = TRUE)
 dir.create(file.path(OUTDIR, "figs/panels"), showWarnings = FALSE, recursive = TRUE)
@@ -43,9 +50,7 @@ theme_hcc <- theme_classic(base_size = 12) +
     legend.position  = "bottom"
   )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PART 1 — Window-scale enrichment decay (primary trans negative control)
-# ═══════════════════════════════════════════════════════════════════════════════
+# PART 1 — Window-scale enrichment decay (primary trans negative control) ======
 message("=== Part 1: Window-scale enrichment decay ===")
 we <- fread(ENRICH_CSV)
 setnames(we, tolower(names(we)))
@@ -62,7 +67,7 @@ we_pt <- we[, .(
   n_classes   = .N
 ), by = .(patient_id, window_kb)][order(patient_id, window_kb)]
 
-# ── Part 1a: Paired Wilcoxon: enrichment at 50 kb vs 1000 kb ─────────────────
+# Part 1a: Paired Wilcoxon: enrichment at 50 kb vs 1000 kb =====================
 pts_both <- intersect(
   we_pt[window_kb == 50,   patient_id],
   we_pt[window_kb == 1000, patient_id]
@@ -85,7 +90,7 @@ message(sprintf(
   median(cis_enrich), median(trans_enrich)
 ))
 
-# ── Part 1b: Enrichment_ratio approaching null (1.0) at 1 Mb ─────────────────
+# Part 1b: Enrichment_ratio approaching null (1.0) at 1 Mb =====================
 # Wilcoxon one-sample: enrichment_ratio at 1000 kb not different from 1 (null)
 trans_all <- we[window_kb == 1000 & !is.na(enrichment_ratio), enrichment_ratio]
 oneside_wt <- suppressWarnings(
@@ -96,7 +101,7 @@ message(sprintf(
   oneside_wt$p.value, median(trans_all, na.rm = TRUE)
 ))
 
-# ── Save Part 1 stats ─────────────────────────────────────────────────────────
+# Save Part 1 stats ============================================================
 pt1_stats <- data.table(
   analysis     = c("paired_Wilcoxon_50kb_vs_1Mb", "onesample_1Mb_vs_null"),
   n            = c(length(pts_both), length(trans_all)),
@@ -116,9 +121,7 @@ we_sum <- we[, .(
 ), by = window_kb][order(window_kb)]
 fwrite(we_sum, file.path(ENRICH_OUT, "trans_neg_ctrl_window_summary.csv"))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PART 2 — HP |Δβ| by SV proximity zone (aDMR data; expected: NO gradient)
-# ═══════════════════════════════════════════════════════════════════════════════
+# PART 2 — HP |Δβ| by SV proximity zone (aDMR data; expected: NO gradient) =====
 message("\n=== Part 2: HP |Δβ| by SV proximity zone (aDMR-level) ===")
 dt <- fread(DIST_CSV)
 setnames(dt, tolower(names(dt)))
@@ -173,9 +176,7 @@ patient_bin <- dt[!is.na(dist_bin), .(
 fwrite(bin_stats,   file.path(ENRICH_OUT, "trans_neg_ctrl_admr_bin_stats.csv"))
 fwrite(patient_bin, file.path(ENRICH_OUT, "trans_neg_ctrl_admr_patient_bin.csv"))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FIGURES
-# ═══════════════════════════════════════════════════════════════════════════════
+# FIGURES ======================================================================
 WIN_COLORS <- c(
   "10"   = "#D6604D",
   "50"   = "#E24B4A",
@@ -189,7 +190,7 @@ BIN_COLORS <- c(
   "Trans (>1Mb)"    = "#95A5A6"
 )
 
-# ── P1A: Enrichment ratio decay curve (per patient, all cnv_class combined) ──
+# P1A: Enrichment ratio decay curve (per patient, all cnv_class combined) ======
 p1a_df <- we_pt
 p1a_df[, window_label := factor(window_kb, levels = sort(unique(window_kb)),
                                  labels = paste0("±", sort(unique(window_kb)), "kb"))]
@@ -218,7 +219,7 @@ p1a <- ggplot(p1a_df, aes(x = as.factor(window_kb), y = mean_enrich, group = pat
   ) +
   theme_hcc
 
-# ── P1B: % enrichment significant (FDR<0.05) by window ───────────────────────
+# P1B: % enrichment significant (FDR<0.05) by window ===========================
 p1b_df <- we[, .(pct_sig = mean(p_fdr < 0.05, na.rm = TRUE) * 100), by = window_kb]
 
 p1b <- ggplot(p1b_df, aes(x = as.factor(window_kb), y = pct_sig,
@@ -236,7 +237,7 @@ p1b <- ggplot(p1b_df, aes(x = as.factor(window_kb), y = pct_sig,
   ) +
   theme_hcc
 
-# ── P2: aDMR HP |Δβ| — no gradient (expected) ────────────────────────────────
+# P2: aDMR HP |Δβ| — no gradient (expected) ====================================
 cnt_str <- paste(
   sprintf("%s n=%s", bin_counts$dist_bin, format(bin_counts$N, big.mark = ",")),
   collapse = " | "
@@ -262,7 +263,7 @@ p2 <- ggplot(dt[!is.na(dist_bin)],
   theme_hcc +
   theme(plot.subtitle = element_text(size = 8))
 
-# ── P3: Per-patient median by zone (paired lines) ────────────────────────────
+# P3: Per-patient median by zone (paired lines) ================================
 p3 <- ggplot(patient_bin, aes(x = dist_bin, y = median_abs, colour = dist_bin)) +
   geom_line(aes(group = patient_id), colour = "grey65",
             linewidth = 0.5, alpha = 0.8) +
@@ -278,7 +279,7 @@ p3 <- ggplot(patient_bin, aes(x = dist_bin, y = median_abs, colour = dist_bin)) 
   theme_hcc +
   theme(plot.subtitle = element_text(size = 8))
 
-# ── Assembly ──────────────────────────────────────────────────────────────────
+# Assembly =====================================================================
 fig_main <- (p1a | p1b) / (p2 | p3) +
   plot_annotation(
     title   = "Trans Negative Control: SV-DMR enrichment is cis-specific (decays to null at 1 Mb)",
@@ -293,11 +294,5 @@ fig_main <- (p1a | p1b) / (p2 | p3) +
 ggsave(FIG_PNG, fig_main, width = 14, height = 10, dpi = 200)
 ggsave(FIG_PDF, fig_main, width = 14, height = 10)
 message(sprintf("\nFigure saved: %s", FIG_PNG))
-
-# ── Decision log ──────────────────────────────────────────────────────────────
-cat(sprintf(
-  "[%s] Trans neg ctrl: Part1 paired 50kb>1Mb Wilcoxon p=%.4f; 1Mb vs null p=%.4f; Part2 aDMR KW p=%.2e (ns=expected; constitutive aDMR model)\n",
-  format(Sys.Date()), pt1_wt$p.value, oneside_wt$p.value, kw$p.value
-), file = DEC_LOG, append = TRUE)
 
 message("\nDone.")

@@ -39,25 +39,32 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-ADM_FILE  <- "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+# Paths ========================================================================
+ADM_FILE  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz")
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 N_CTRL_MULT <- 10L
 HP_STRONG   <- 0.20   # |HP delta| threshold for Gold*_strong
 
-# ── 0. Load reference files ────────────────────────────────────────────────────
+# 0. Load reference files ======================================================
 message("Loading reference files …")
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z")) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr)) |>
@@ -67,7 +74,7 @@ segdup_gr <- import(SEGDUP, format = "BED"); seqlevelsStyle(segdup_gr) <- "UCSC"
 lad_gr    <- import(LAD,    format = "BED"); seqlevelsStyle(lad_gr)    <- "UCSC"
 bw        <- BigWigFile(PC1_BW)
 
-# ── Helper: annotate GRanges with fragility features ─────────────────────────
+# Helper: annotate GRanges with fragility features =============================
 annotate_gr <- function(gr) {
   gr$segdup <- overlapsAny(gr, segdup_gr)
   gr$lad    <- overlapsAny(gr, lad_gr)
@@ -78,7 +85,7 @@ annotate_gr <- function(gr) {
   gr
 }
 
-# ── Helper: generate matched random controls ──────────────────────────────────
+# Helper: generate matched random controls =====================================
 make_controls <- function(case_gr, n_mult = N_CTRL_MULT) {
   ctrl_list <- lapply(seq_len(length(case_gr)), function(i) {
     chr <- as.character(seqnames(case_gr)[i])
@@ -93,7 +100,7 @@ make_controls <- function(case_gr, n_mult = N_CTRL_MULT) {
   do.call(c, Filter(Negate(is.null), ctrl_list))
 }
 
-# ── Helper: logistic GLM and extract OR ───────────────────────────────────────
+# Helper: logistic GLM and extract OR ==========================================
 # Returns list(primary = <original segdup-focused row, unchanged for Wald tests
 # and the existing forest plot>, multifeature = <long-format SegDup/LAD/B-comp
 # table, adjusted + marginal, for the 3-population x fragility-feature figure>)
@@ -161,7 +168,7 @@ run_glm <- function(case_gr, label, n_ctrl_mult = N_CTRL_MULT) {
   list(primary = primary, multifeature = mf_rows)
 }
 
-# ── 1. Build locus sets ────────────────────────────────────────────────────────
+# 1. Build locus sets ==========================================================
 message("Building locus sets …")
 
 # A) Original Gold (with proximity)
@@ -210,7 +217,7 @@ cat(sprintf("Gold*_R5 (n_patients>=5, no proximity): %d unique loci\n", nrow(gol
 all_u <- adm_loci
 cat(sprintf("All aDMR unique loci: %d\n", nrow(all_u)))
 
-# ── 2. Run GLMs for each set ──────────────────────────────────────────────────
+# 2. Run GLMs for each set =====================================================
 message("\nRunning GLMs …")
 
 make_gr <- function(dt) {
@@ -264,7 +271,7 @@ print(results |>
          pct_segdup_case = round(pct_segdup_case, 1)) |>
   select(label, n_case, pct_segdup_case, OR, CI_lo, CI_hi, p, sig))
 
-# ── 3. Wald test: Gold vs Gold* (does OR differ?) ────────────────────────────
+# 3. Wald test: Gold vs Gold* (does OR differ?) ================================
 cat("\n=== Wald tests: Gold vs Gold* ===\n")
 wald_vs_gold <- function(res_star, label_star) {
   z  <- (res_gold$beta - res_star$beta) / sqrt(res_gold$se^2 + res_star$se^2)
@@ -285,11 +292,11 @@ cat(sprintf("  Gold  β=%.3f  OR=%.2f\n", res_gold$beta, res_gold$OR))
 cat(sprintf("  R3    β=%.3f  OR=%.2f\n", res_r3$beta,   res_r3$OR))
 cat(sprintf("  All   β=%.3f  OR=%.2f\n", res_all$beta,  res_all$OR))
 
-# ── 4. Save ───────────────────────────────────────────────────────────────────
+# 4. Save ======================================================================
 fwrite(results, file.path(OUT_DIR, "a_gold1_or_table.csv"))
 message("Wrote: a_gold1_or_table.csv")
 
-# ── 5. Figure ─────────────────────────────────────────────────────────────────
+# 5. Figure ====================================================================
 label_order <- c(
   "Gold (original, bp<=50kb)",
   "Gold*_R5 (n>=5, no prox)",

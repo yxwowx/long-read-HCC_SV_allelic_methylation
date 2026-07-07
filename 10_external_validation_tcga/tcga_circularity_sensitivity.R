@@ -27,23 +27,30 @@ suppressPackageStartupMessages({
   library(GenomicRanges)
   library(rtracklayer)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-C17_FILE  <- "/node200data/kachungk/hcc_data/DMR_SVs/result/c17_hm450_segdup_probe_density.csv"
-CNA_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/external_validation_cache/cna_segs"
-OUTDIR    <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+C17_FILE  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result/c17_hm450_segdup_probe_density.csv")
+CNA_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/external_validation_cache/cna_segs")
+OUTDIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 OUTFILE   <- file.path(OUTDIR, "tcga_circularity_sensitivity.csv")
 
 CTRL_MULT <- 5L
 
 cat("=== TCGA-LIHC CNA SegDup enrichment: circularity sensitivity ===\n\n")
 
-# ── Reference data ────────────────────────────────────────────────────────────
+# Reference data ===============================================================
 message("Loading reference annotations...")
 segdup_gr <- import(SEGDUP, format = "BED")
 seqlevelsStyle(segdup_gr) <- "UCSC"
@@ -54,7 +61,7 @@ seqlevelsStyle(lad_gr) <- "UCSC"
 chrom_sizes <- fread(FAI, col.names = c("chr","len","x","y","z")) |>
   filter(grepl("^chr[0-9XY]+$", chr), !grepl("_", chr))
 
-# ── Load c17 probe-depletion metrics ─────────────────────────────────────────
+# Load c17 probe-depletion metrics =============================================
 c17 <- setNames(as.numeric(fread(C17_FILE)$value),
                 fread(C17_FILE)$metric)
 depletion_ratio       <- c17["depletion_ratio"]
@@ -64,7 +71,7 @@ expected_or_depletion <- c17["expected_OR_under_depletion"]
 cat(sprintf("C17 probe density: depletion_ratio=%.4f, expected_OR_corrected=%.4f\n",
             depletion_ratio, expected_or_depletion))
 
-# ── Load cached TCGA CNA breakpoints ─────────────────────────────────────────
+# Load cached TCGA CNA breakpoints =============================================
 parse_cna_seg <- function(file_path) {
   dt <- tryCatch(fread(file_path, showProgress = FALSE), error = function(e) NULL)
   if (is.null(dt) || nrow(dt) == 0) return(NULL)
@@ -97,7 +104,7 @@ bp_gr <- GRanges(seqnames = all_bps$chr,
                  ranges   = IRanges(all_bps$pos, all_bps$pos),
                  is_sv    = 1L)
 
-# ── Helper: controls + annotation + GLM ────────────────────────────────────────
+# Helper: controls + annotation + GLM ==========================================
 make_controls <- function(cases_gr) {
   chr_tab <- table(as.character(seqnames(cases_gr)))
   ctrl_list <- lapply(names(chr_tab), function(ch) {
@@ -159,14 +166,14 @@ annotate_glm <- function(cases_gr, label = "") {
             extract_or(m_multi, "Multivariate"))
 }
 
-# ── Model A: Full dataset (confirm OR=2.01) ────────────────────────────────────
+# Model A: Full dataset (confirm OR=2.01) ======================================
 cat("\n--- Model A: Full CNA breakpoints (reproduce OR=2.01) ---\n")
 res_full <- annotate_glm(bp_gr, label = "Full_CNA")
 or_full  <- res_full |> filter(predictor == "segdup", model == "Multivariate") |>
   pull(OR)
 cat(sprintf("Full CNA multivariate SegDup OR = %.3f\n", or_full))
 
-# ── Model B: Exclude SegDup-overlapping breakpoints ───────────────────────────
+# Model B: Exclude SegDup-overlapping breakpoints ==============================
 cat("\n--- Model B: Non-SegDup CNA breakpoints only ---\n")
 in_segdup  <- overlapsAny(bp_gr, segdup_gr)
 bp_nonsd   <- bp_gr[!in_segdup]
@@ -179,7 +186,7 @@ cat(sprintf("Non-SegDup CNA multivariate SegDup OR = %.3f\n", or_nonsd))
 cat("(If OR remains >1 even excluding SegDup-intersecting breakpoints,\n")
 cat(" residual enrichment at SegDup boundaries is not self-referential.)\n")
 
-# ── Probe-depletion quantification (c17) ──────────────────────────────────────
+# Probe-depletion quantification (c17) =========================================
 cat("\n--- Probe depletion contribution (c17 data) ---\n")
 # HM450 probes in SegDup: 4.65% of probes vs 5.02% of genome → probe depletion ratio 0.923
 # This attenuates DETECTION of array-based aDMR at SegDup, NOT detection of CNA breakpoints
@@ -203,7 +210,7 @@ cat("not from the 7.7% probe depletion (would only attenuate to ~2.13).\n")
 cat("The CNA-breakpoint arm (OR=2.01) is conceptually comparable to our SV-OR=2.11.\n")
 cat("Both represent structural variant breakpoints at SegDup → genuine corroboration.\n")
 
-# ── Summary table ─────────────────────────────────────────────────────────────
+# Summary table ================================================================
 probe_row <- data.frame(
   cohort    = "probe_depletion_quantification",
   model     = "c17",
@@ -221,7 +228,7 @@ out_dt <- bind_rows(res_full, res_nonsd, probe_row)
 fwrite(out_dt, OUTFILE)
 cat(sprintf("\nSaved: %s\n", OUTFILE))
 
-# ── Print key numbers for manuscript ─────────────────────────────────────────
+# Print key numbers for manuscript =============================================
 cat("\n=== KEY NUMBERS FOR MANUSCRIPT ===\n")
 cat(sprintf("Full CNA OR=%.3f [%.3f–%.3f]\n",
             res_full |> filter(predictor=="segdup",model=="Multivariate") |> pull(OR),

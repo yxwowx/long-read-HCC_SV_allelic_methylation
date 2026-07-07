@@ -12,14 +12,19 @@ suppressPackageStartupMessages({
   library(rtracklayer)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 
-REF_ROOT  <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT  <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 LAD_BED    <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
 PC1_BW     <- file.path(REF_ROOT, "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
@@ -31,7 +36,7 @@ DIST_FAR_KB    <- 10000L  # bp; aDMR >10kb from any SV for C23
 
 MAIN_CHROMS <- paste0("chr", c(1:22, "X"))
 
-# ── Load reference features ───────────────────────────────────────────────────
+# Load reference features ======================================================
 cat("[0] Loading reference features...\n")
 segdup_gr <- import.bed(SEGDUP_BED) |> keepStandardChromosomes(pruning.mode = "coarse")
 segdup_gr <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
@@ -59,7 +64,7 @@ annotate_gr <- function(gr) {
   gr
 }
 
-# ── Generate width+chr-matched controls ───────────────────────────────────────
+# Generate width+chr-matched controls ==========================================
 make_controls <- function(case_gr, n_mult, seed) {
   set.seed(seed)
   ctrl_list <- lapply(seqlevels(case_gr)[seqlevels(case_gr) %in% MAIN_CHROMS], function(chr) {
@@ -83,7 +88,7 @@ make_controls <- function(case_gr, n_mult, seed) {
   do.call(c, Filter(Negate(is.null), ctrl_list))
 }
 
-# ── GLM helper ────────────────────────────────────────────────────────────────
+# GLM helper ===================================================================
 run_glm <- function(case_gr, ctrl_gr, formula_str, claim, seed, granularity = "window") {
   case_gr <- annotate_gr(case_gr)
   ctrl_gr <- annotate_gr(ctrl_gr)
@@ -128,7 +133,7 @@ run_glm <- function(case_gr, ctrl_gr, formula_str, claim, seed, granularity = "w
   )
 }
 
-# ── Load data ─────────────────────────────────────────────────────────────────
+# Load data ====================================================================
 cat("[1] Loading somatic aDMR...\n")
 admr_dt <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 admr_dt <- admr_dt[seqnames %in% MAIN_CHROMS]
@@ -146,7 +151,7 @@ sv_gr_all <- makeGRangesFromDataFrame(
 )
 cat(sprintf("  %d SV breakpoints\n", length(sv_gr_all)))
 
-# ── C23: aDMR far from SV (>10kb) ─────────────────────────────────────────────
+# C23: aDMR far from SV (>10kb) ================================================
 sv_flanked_gr <- suppressWarnings(trim(resize(sv_gr_all, width = 2 * DIST_FAR_KB + 1L, fix = "center")))
 admr_far_mask <- !IRanges::overlapsAny(admr_gr_all, sv_flanked_gr)
 cat(sprintf("  C23: aDMR >%dkb from SV: %d / %d (%.1f%%)\n",
@@ -154,7 +159,7 @@ cat(sprintf("  C23: aDMR >%dkb from SV: %d / %d (%.1f%%)\n",
             length(admr_gr_all), mean(admr_far_mask)*100))
 admr_gr_far <- admr_gr_all[admr_far_mask]
 
-# ── Run GLMs across seeds ──────────────────────────────────────────────────────
+# Run GLMs across seeds ========================================================
 results <- list()
 
 for (seed in SEEDS) {
@@ -221,7 +226,7 @@ for (seed in SEEDS) {
   }
 }
 
-# ── Merged-region analyses (cross-patient union) ──────────────────────────────
+# Merged-region analyses (cross-patient union) =================================
 # Purpose: collapse 2.88M per-patient per-window loci into non-redundant genomic
 #   regions for an apples-to-apples comparison with the per-SV-breakpoint C13 GLM.
 #   Window-level OR (~1.13) is a pseudoreplication artifact of counting CpG windows
@@ -299,7 +304,7 @@ for (seed in SEEDS) {
   }
 }
 
-# ── Summarize ─────────────────────────────────────────────────────────────────
+# Summarize ====================================================================
 if (length(results) == 0) stop("All window-granularity run_glm calls returned try-error")
 results_all <- c(results, results_merged)
 results_dt  <- rbindlist(results_all)
@@ -329,16 +334,5 @@ fwrite(results_dt, file.path(OUT_ROOT, "segdup_or_table.csv"))
 cat(sprintf("\nSaved: segdup_or_table.csv (%d rows, both window + region granularity)\n",
             nrow(results_dt)))
 
-c14_win_or <- results_dt[claim == "C14_admr_segdup" & granularity == "window" &
-                            seed == 42L & term == "segdup", OR]
-c14_reg_or <- results_dt[claim == "C14_admr_segdup" & granularity == "region" &
-                            seed == 42L & term == "segdup", OR]
-log_decision(sprintf(
-  "02_fragility_glm: C14 window OR=%.2f (n_case=%.0fM); C14 region OR=%.2f (seed 42); C13 SV OR=%.2f",
-  ifelse(length(c14_win_or) > 0, c14_win_or, NA),
-  ifelse(length(c14_win_or) > 0,
-         results_dt[claim=="C14_admr_segdup" & granularity=="window" & seed==42L & term=="segdup", n_case] / 1e6, NA),
-  ifelse(length(c14_reg_or) > 0, c14_reg_or, NA),
-  primary[claim == "C13_sv_segdup", OR]))
-
 cat("=== Done: 02_fragility_glm.R ===\n")
+

@@ -11,21 +11,26 @@ suppressPackageStartupMessages({
   library(rtracklayer)
 })
 
-UTILS_DIR <- "/home/kachungk/script/SV-DMR/shared_file/pipeline"
-source(file.path(UTILS_DIR, "shared_utils.R"))
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-DATA_ROOT    <- "/node200data/kachungk/hcc_data"
+DATA_ROOT    <- Sys.getenv("HCC_DATA_DIR")
 DMR_SVS_ROOT <- file.path(DATA_ROOT, "DMR_SVs")
 OUT_ROOT     <- file.path(DATA_ROOT, "SV_aDMR")
 
-REF_ROOT   <- "/node200data/kachungk/reference/GRCh38"
+REF_ROOT   <- Sys.getenv("REFERENCE_DIR")
 SEGDUP_BED <- file.path(REF_ROOT, "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
 
 N_PERM      <- 1000L
 MAIN_CHROMS <- paste0("chr", c(1:22, "X"))
 set.seed(2026)
 
-# ── Load SegDup; reduce to non-overlapping intervals per chrom ────────────────
+# Load SegDup; reduce to non-overlapping intervals per chrom ===================
 cat("[0] Loading SegDup...\n")
 segdup_gr  <- import.bed(SEGDUP_BED) |> keepStandardChromosomes(pruning.mode = "coarse")
 segdup_gr  <- segdup_gr[seqnames(segdup_gr) %in% MAIN_CHROMS]
@@ -43,7 +48,7 @@ names(seg_by_chr) <- MAIN_CHROMS
 genome_bp <- sum(as.numeric(CHROM_LENS[MAIN_CHROMS]))
 bg_frac   <- sum(as.numeric(width(segdup_red))) / genome_bp
 
-# ── Fast interval-in-sorted-set overlap count ─────────────────────────────────
+# Fast interval-in-sorted-set overlap count ====================================
 # Correct for non-overlapping (reduced) intervals:
 # If the last SegDup with start ≤ query_end doesn't end ≥ query_start,
 # no earlier SegDup can overlap either (proved by the non-overlap property).
@@ -54,7 +59,7 @@ count_in_segdup <- function(q_starts, q_ends, seg_starts, seg_ends) {
   sum(hits)
 }
 
-# ── Load case sets ─────────────────────────────────────────────────────────────
+# Load case sets ===============================================================
 cat("[1] Loading somatic aDMR...\n")
 admr_dt  <- fread(file.path(OUT_ROOT, "somatic_admr_annotated.csv.gz"))
 admr_pos <- admr_dt[seqnames %in% MAIN_CHROMS, .(seqnames, start, end)]
@@ -80,7 +85,7 @@ sv_by_chr <- lapply(MAIN_CHROMS, function(chr) {
 names(sv_by_chr) <- MAIN_CHROMS
 cat(sprintf("  %d SV breakpoints\n", nrow(sv_pos)))
 
-# ── Observed overlaps ─────────────────────────────────────────────────────────
+# Observed overlaps ============================================================
 obs_admr <- sum(mapply(function(ac, sc) {
   count_in_segdup(ac$start, ac$end, sc$start, sc$end)
 }, admr_by_chr, seg_by_chr))
@@ -93,7 +98,7 @@ cat(sprintf("Observed: aDMR=%d (%.2f%%), SV=%d (%.2f%%)\n",
             obs_admr, obs_admr/nrow(admr_pos)*100,
             obs_sv,   obs_sv/nrow(sv_pos)*100))
 
-# ── Circular permutation (per-chrom uniform random shift) ────────────────────
+# Circular permutation (per-chrom uniform random shift) ========================
 cat(sprintf("[3] Running %d circular permutations...\n", N_PERM))
 
 one_perm <- function(pos_by_chr, seg_by_chr) {
@@ -125,7 +130,7 @@ for (i in seq_len(N_PERM)) {
   null_sv[i] <- one_perm(sv_by_chr, seg_by_chr)
 }
 
-# ── Results ───────────────────────────────────────────────────────────────────
+# Results ======================================================================
 n_admr <- nrow(admr_pos)
 n_sv   <- nrow(sv_pos)
 
@@ -143,7 +148,7 @@ cat(sprintf("  Somatic aDMR: obs_or=%.3f, null_mean_or=%.3f±%.3f, emp_p=%.4f\n"
 cat(sprintf("  SV bp:        obs_or=%.3f, null_mean_or=%.3f±%.3f, emp_p=%.4f\n",
             obs_or_sv, mean(null_or_sv), sd(null_or_sv), emp_p_sv))
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# Save =========================================================================
 null_dt <- rbind(
   data.table(set = "somatic_admr", perm = seq_len(N_PERM),
              n_overlap = null_admr, or_approx = null_or_admr),
@@ -169,8 +174,5 @@ fwrite(summ_dt,  file.path(OUT_ROOT, "segdup_permutation_summary.csv"))
 
 cat("\nSaved: segdup_permutation_null.csv, segdup_permutation_summary.csv\n")
 print(summ_dt)
-
-log_decision(sprintf("03_segdup_permutation: direct circular perm, n=%d; aDMR emp_p=%.4f, SV emp_p=%.4f",
-                     N_PERM, emp_p_admr, emp_p_sv))
 
 cat("=== Done: 03_segdup_permutation.R ===\n")

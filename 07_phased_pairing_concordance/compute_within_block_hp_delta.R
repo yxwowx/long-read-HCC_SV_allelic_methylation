@@ -14,12 +14,19 @@ suppressPackageStartupMessages({
   library(rtracklayer)
   library(stringr)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
-SV_FILE   <- "/node200data/kachungk/hcc_data/DMR_SVs/02.sv_dmr_enrichment/sv_tad_ctcf_annotation.v2.csv.gz"
-ADM_FILE  <- "/node200data/kachungk/hcc_data/DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz"
-GTF_DIR   <- "/node200data/kachungk/hcc_data/hg38+HBV/clairS/phased_vcf"
-PMAP_FILE <- "/home/kachungk/patient_code_mapping.csv"
-OUTDIR    <- "/node200data/kachungk/hcc_data/DMR_SVs/03.haplotype_sv_admr_analysis"
+SV_FILE   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/02.sv_dmr_enrichment/sv_tad_ctcf_annotation.v2.csv.gz")
+ADM_FILE  <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/01.DMR_recurrence/confident_dmr_per_patient.csv.gz")
+GTF_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "hg38+HBV/clairS/phased_vcf")
+PMAP_FILE <- Sys.getenv("PATIENT_CODE_MAP")
+OUTDIR    <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/03.haplotype_sv_admr_analysis")
 OUT_FILE  <- file.path(OUTDIR, "sv_admr_within_block_hp_delta.csv.gz")
 
 TIER_RECODE <- c(
@@ -31,11 +38,11 @@ TIER_RECODE <- c(
   "HBV-associated"      = "HBV_associated"
 )
 
-# ── Patient code mapping ──────────────────────────────────────────────────────
+# Patient code mapping =========================================================
 pmap <- fread(PMAP_FILE)  # cols: Samples_ID, patient_code
 name2code <- setNames(pmap$patient_code, pmap$Samples_ID)
 
-# ── Load phase blocks (one GRangesList per patient_code) ─────────────────────
+# Load phase blocks (one GRangesList per patient_code) =========================
 message("Loading phase blocks …")
 gtf_files <- list.files(GTF_DIR, pattern = "\\.gtf$", full.names = TRUE)
 phase_blocks <- lapply(gtf_files, function(f) {
@@ -55,7 +62,7 @@ PATIENT_IDS <- names(phase_blocks)
 message(sprintf("Patients with phase blocks: %d — %s",
                 length(PATIENT_IDS), paste(PATIENT_IDS, collapse = ", ")))
 
-# ── Load aDMRs ────────────────────────────────────────────────────────────────
+# Load aDMRs ===================================================================
 message("Loading aDMR data …")
 admr_raw <- fread(ADM_FILE) %>%
   filter(!is.na(admr_chr), !is.na(admr_start), !is.na(admr_end)) %>%
@@ -73,7 +80,7 @@ admr_gr_list <- admr_raw %>%
   ) %>%
   split(mcols(.)$patient_id)
 
-# ── Assign block_id to aDMRs via phase block overlap ─────────────────────────
+# Assign block_id to aDMRs via phase block overlap =============================
 message("Assigning block_id to aDMRs …")
 admr_gr_list <- lapply(PATIENT_IDS, function(pt) {
   dmr_gr <- admr_gr_list[[pt]]
@@ -84,7 +91,7 @@ admr_gr_list <- lapply(PATIENT_IDS, function(pt) {
   dmr_gr[!is.na(mcols(dmr_gr)$block_id)]
 }) %>% setNames(PATIENT_IDS)
 
-# ── Load SVs (already have PHASESETID = block_id) ────────────────────────────
+# Load SVs (already have PHASESETID = block_id) ================================
 message("Loading SV data …")
 sv_dt <- fread(SV_FILE, select = c("seqnames","start","end","PHASESETID","sample","geom_type","stratification"))
 setnames(sv_dt, c("PHASESETID","sample","geom_type"), c("block_id","patient_id","sv_type"))
@@ -94,7 +101,7 @@ sv_raw <- sv_dt %>%
   makeGRangesFromDataFrame(keep.extra.columns = TRUE) %>%
   split(mcols(.)$patient_id)
 
-# ── Compute within-block distances + hp_delta ─────────────────────────────────
+# Compute within-block distances + hp_delta ====================================
 message("Computing within-block distances …")
 result <- rbindlist(lapply(PATIENT_IDS, function(pt) {
   sv_gr  <- sv_raw[[pt]]

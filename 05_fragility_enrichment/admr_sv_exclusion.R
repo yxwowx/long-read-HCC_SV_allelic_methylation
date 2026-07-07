@@ -17,23 +17,30 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
 })
+REPO_ROOT <- local({
+  d <- dirname(normalizePath(sub("--file=", "",
+    grep("--file=", commandArgs(FALSE), value = TRUE)[1])))
+  while (!dir.exists(file.path(d, "shared")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(REPO_ROOT, "shared", "shared_utils.R"))
 
 set.seed(42)
 
-GOLD_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/gold_tier_final.csv"
-SILV_FILE <- "/node200data/kachungk/hcc_data/DMR_SVs/04.final_candidate/silver_tier.csv"
-SV_FILE   <- "/node200data/kachungk/hcc_data/DMR_SVs/sv_tad_ctcf_annotation.csv.gz"
-SEGDUP    <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed"
-LAD       <- "/node200data/kachungk/reference/GRCh38/LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed"
-PC1_BW    <- "/node200data/kachungk/reference/GRCh38/3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw"
-FAI       <- "/node200data/kachungk/reference/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai"
-OUT_DIR   <- "/node200data/kachungk/hcc_data/DMR_SVs/result"
+GOLD_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/gold_tier_final.csv")
+SILV_FILE <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/04.final_candidate/silver_tier.csv")
+SV_FILE   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/sv_tad_ctcf_annotation.csv.gz")
+SEGDUP    <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/genomicSuperDups.bed")
+LAD       <- file.path(Sys.getenv("REFERENCE_DIR"), "LOLACore_180423/hg38/ucsc_features/regions/laminB1Lads.bed")
+PC1_BW    <- file.path(Sys.getenv("REFERENCE_DIR"), "3Dgenomebrowser/HepG2-Control_Merged_MicroC_GSE278978_cis_pc1.bw")
+FAI       <- file.path(Sys.getenv("REFERENCE_DIR"), "GCA_000001405.15_GRCh38_no_alt_analysis_set.fa.fai")
+OUT_DIR   <- file.path(Sys.getenv("HCC_DATA_DIR"), "DMR_SVs/result")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 dir.create(FIG_DIR, showWarnings = FALSE)
 
 N_CTRL_MULT <- 10
 
-# ── 1. Load aDMR loci ────────────────────────────────────────────────────────
+# 1. Load aDMR loci ============================================================
 message("Loading aDMR loci...")
 admr_cols <- c("tier_class","admr_chr","admr_start","admr_end","nCG")
 gold <- fread(GOLD_FILE, data.table=FALSE) |> select(all_of(admr_cols))
@@ -52,7 +59,7 @@ admr_gr <- GRanges(
   locus_id = seq_len(nrow(admr))
 )
 
-# ── 2. Load SV breakpoints ───────────────────────────────────────────────────
+# 2. Load SV breakpoints =======================================================
 message("Loading SV breakpoints...")
 sv <- fread(SV_FILE, data.table=FALSE) |>
   filter(grepl("^chr[0-9XY]+$", seqnames))
@@ -63,7 +70,7 @@ sv_gr <- GRanges(
 )
 cat(sprintf("SV breakpoints: %d\n", length(sv_gr)))
 
-# ── 3. Compute minimum SV distance for each aDMR ────────────────────────────
+# 3. Compute minimum SV distance for each aDMR =================================
 message("Computing min SV distance per aDMR...")
 dist_mat <- distanceToNearest(admr_gr, sv_gr, ignore.strand=TRUE)
 admr$min_sv_dist <- Inf
@@ -74,7 +81,7 @@ cat(sprintf("aDMRs with SV within 50kb : %d\n", sum(admr$min_sv_dist <= 50000)))
 cat(sprintf("aDMRs SV-far >10kb        : %d\n", sum(admr$min_sv_dist >  10000)))
 cat(sprintf("aDMRs SV-far >50kb        : %d\n", sum(admr$min_sv_dist >  50000)))
 
-# ── 4. Load fragility feature annotations ───────────────────────────────────
+# 4. Load fragility feature annotations ========================================
 message("Loading fragility features...")
 segdup_gr <- import(SEGDUP, format="BED"); seqlevelsStyle(segdup_gr) <- "UCSC"
 lad_gr    <- import(LAD,    format="BED"); seqlevelsStyle(lad_gr)    <- "UCSC"
@@ -143,7 +150,7 @@ run_enrichment <- function(df, label) {
   )
 }
 
-# ── 5. Run enrichment for each subset ────────────────────────────────────────
+# 5. Run enrichment for each subset ============================================
 thresholds <- list(
   "All aDMRs"      = admr,
   "SV-far > 10kb"  = admr[admr$min_sv_dist > 10000, ],
@@ -168,7 +175,7 @@ print(res_df |> select(subset, n_admr, glm_OR, glm_CI_lo, glm_CI_hi, glm_p, sig_
 fwrite(res_df, file.path(OUT_DIR, "a3_sv_exclusion_segdup.csv"))
 message("Wrote: a3_sv_exclusion_segdup.csv")
 
-# ── 6. Figure ─────────────────────────────────────────────────────────────────
+# 6. Figure ====================================================================
 res_df$subset <- factor(res_df$subset,
   levels=c("All aDMRs","SV-far > 10kb","SV-far > 50kb"))
 
